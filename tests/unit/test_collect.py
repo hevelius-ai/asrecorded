@@ -240,3 +240,36 @@ def test_a_failed_swap_keeps_the_earlier_data_folder(
     )
     assert before.read_text(encoding="utf-8") == "earlier"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["data", "settings.toml"]
+
+
+@pytest.mark.parametrize("name", ["data.collecting", "data.old"])
+def test_a_folder_in_the_way_of_collect_s_work_is_never_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    earlier_data(tmp_path)
+    mine = tmp_path / name / "notes.txt"
+    mine.parent.mkdir()
+    mine.write_text("mine", encoding="utf-8")
+    monkeypatch.setattr(github, "pages", fake_pages(shop(), []))
+    with pytest.raises(Stop) as stop:
+        collect(settings_in(tmp_path))
+    assert stop.value.message == (
+        f"{tmp_path / name} is in the way: collect uses that name while it works. Move or rename it, then run "
+        "collect again. No record was written."
+    )
+    assert mine.read_text(encoding="utf-8") == "mine"
+
+
+@pytest.mark.parametrize("marker", [b"node_modules\n", "*\n".encode("utf-16")])
+def test_a_data_folder_with_another_gitignore_is_never_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marker: bytes
+) -> None:
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / ".gitignore").write_bytes(marker)
+    (data / "notes.txt").write_text("mine", encoding="utf-8")
+    monkeypatch.setattr(github, "pages", fake_pages(shop(), []))
+    with pytest.raises(Stop) as stop:
+        collect(settings_in(tmp_path))
+    assert stop.value.message.startswith(f"The data folder {data} holds files that collect did not save.")
+    assert (data / "notes.txt").read_text(encoding="utf-8") == "mine"

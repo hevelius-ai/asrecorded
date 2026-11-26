@@ -388,3 +388,72 @@ def test_a_push_at_the_period_start_is_listed_and_250_commits_are_all_listed(tmp
         ("#6", "pull request", "2026-11-02T10:00:00Z"),
     ]
     assert result.not_covered == []
+
+
+def test_a_main_line_commit_above_the_last_entry_is_not_covered(tmp_path: Path) -> None:
+    folder = repository(
+        tmp_path,
+        pulls=[pull(11, "2026-11-02T10:00:00Z", 103)],
+        activity=[
+            entry("pr_merge", h(1), h(103), "2026-11-02T10:00:00Z"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[
+            commit(5, [103], "2026-11-10T10:00:00Z"),
+            commit(103, [1, 102]),
+            commit(102, [1]),
+            commit(1, [], OUTSIDE),
+        ],
+        details={11: (1, [commit(102, [1])])},
+    )
+    assert list_changes("acme/shop", folder, START, END).not_covered == [
+        f"acme/shop: not covered: commit {h(5)[:7]} on the main line, dated 2026-11-10 at 10:00 UTC, "
+        "is not explained by the activity history"
+    ]
+
+
+def test_a_rewrite_after_the_period_end_is_named_in_place_of_the_cross_check(tmp_path: Path) -> None:
+    folder = repository(
+        tmp_path,
+        pulls=[pull(11, "2026-11-02T10:00:00Z", 103)],
+        activity=[
+            entry("force_push", h(103), h(303), "2026-12-02T09:00:00Z"),
+            entry("pr_merge", h(1), h(103), "2026-11-02T10:00:00Z"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[
+            commit(303, [302], "2026-11-15T10:00:00Z"),
+            commit(302, [1], "2026-11-15T10:00:00Z"),
+            commit(1, [], OUTSIDE),
+        ],
+        details={11: (1, [])},
+    )
+    result = list_changes("acme/shop", folder, START, END)
+    assert shown(result) == [("#11", "pull request", "2026-11-02T10:00:00Z")]
+    assert result.rewrites == []
+    assert result.not_covered == [
+        "acme/shop: not covered: history was rewritten after the period's end, on 2026-12-02 at 09:00 UTC, "
+        "so the main line was not cross-checked"
+    ]
+
+
+def test_the_cross_check_counts_the_period_start_in_and_the_end_out(tmp_path: Path) -> None:
+    folder = repository(
+        tmp_path,
+        pulls=[],
+        activity=[entry("branch_creation", ZERO, h(1), OUTSIDE)],
+        main=[
+            commit(7, [6], "2026-12-01T00:00:00Z"),
+            commit(6, [1], "2026-11-01T00:00:00Z"),
+            commit(1, [], OUTSIDE),
+        ],
+    )
+    assert list_changes("acme/shop", folder, START, END).not_covered == [
+        f"acme/shop: not covered: commit {h(6)[:7]} on the main line, dated 2026-11-01 at 00:00 UTC, "
+        "is not explained by the activity history"
+    ]
+
+
+def test_an_activity_history_that_starts_at_the_period_start_is_covered(tmp_path: Path) -> None:
+    folder = repository(tmp_path, pulls=[], activity=[entry("pr_merge", h(1), h(2), "2026-11-01T00:00:00Z")], main=[])
+    assert list_changes("acme/shop", folder, START, END).not_covered == []

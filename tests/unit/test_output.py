@@ -113,3 +113,14 @@ def test_a_write_that_fails_keeps_the_earlier_changes_file_whole(
     )
     assert earlier.read_text(encoding="utf-8") == "the earlier list\n"
     assert sorted(x.name for x in earlier.parent.iterdir()) == ["changes.csv"]
+
+
+def test_an_output_that_names_a_file_gives_one_plain_sentence(tmp_path: Path) -> None:
+    taken = tmp_path / "record"
+    taken.write_text("a file, not a folder", encoding="utf-8")
+    shop = RepositoryList("acme/shop", [Change("acme/shop", "#11", "pull request", parse("2026-11-02T10:00:00Z"))])
+    with pytest.raises(Stop) as stop:
+        write_changes(taken, [shop])
+    assert stop.value.message.startswith(f"Cannot write {taken / 'changes.csv'}: ")
+    assert stop.value.message.endswith("No record was written.")
+    assert taken.read_text(encoding="utf-8") == "a file, not a folder"

@@ -19,7 +19,7 @@ from asrecorded.times import count, parse
 ZERO = "0" * 40
 PUSHES = {"push", "force_push", "branch_creation"}
 # The raw replies carry email addresses and titles (A12): git ignores them wherever the folder lies. The same file
-# marks a folder collect saved, the only kind of folder collect ever replaces.
+# marks a folder collect saved: collect replaces or removes only an empty folder or one holding this file.
 MARKER = "# Saved by AsRecorded's collect: GitHub's raw replies, which hold email addresses. Never commit them.\n*\n"
 
 
@@ -31,6 +31,12 @@ def collect(settings: Settings) -> list[str]:
             "in the settings. No record was written."
         )
     staging = final.with_name(final.name + ".collecting")
+    for helper in (staging, _old(final)):
+        if helper.exists() and not _replaceable(helper):
+            raise Stop(
+                f"{helper} is in the way: collect uses that name while it works. Move or rename it, then run "
+                "collect again. No record was written."
+            )
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True)
     try:
@@ -48,8 +54,20 @@ def _replaceable(folder: Path) -> bool:
     """An empty folder, or one an earlier collect saved."""
     if not folder.is_dir():
         return False
+    if not any(folder.iterdir()):
+        return True
     marker = folder / ".gitignore"
-    return not any(folder.iterdir()) or (marker.is_file() and marker.read_text(encoding="utf-8") == MARKER)
+    if not marker.is_file():
+        return False
+    try:
+        text = marker.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:  # for example UTF-16, as Windows PowerShell 5.1 writes with >
+        return False
+    return text.replace("\r\n", "\n") == MARKER
+
+
+def _old(final: Path) -> Path:
+    return final.with_name(final.name + ".old")
 
 
 def _swap(staging: Path, final: Path) -> None:
@@ -57,7 +75,7 @@ def _swap(staging: Path, final: Path) -> None:
     if not final.exists():
         staging.rename(final)
         return
-    old = final.with_name(final.name + ".old")
+    old = _old(final)
     shutil.rmtree(old, ignore_errors=True)
     try:
         final.rename(old)

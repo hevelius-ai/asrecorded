@@ -141,11 +141,13 @@ def _list(repository: str, folder: Path, start: datetime, end: datetime) -> Repo
     pushes: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
     for entry in sorted(activity, key=lambda e: parse(e["timestamp"])):
         kind = entry["activity_type"]
+        # Every entry, at any time, brought in its own stretch of the saved first-parent line, from `after` back to
+        # `before` (or `after` alone when `before` is not on it); for a merge, those commits are the pull request's.
+        line, reached = _first_parent_line(entry["after"], main_parents, entry["before"])
+        stretch = set(line) if reached else {entry["after"]}
+        brought |= stretch
         if kind in MERGES:
-            line, reached = _first_parent_line(entry["after"], main_parents, entry["before"])
-            merged_in = set(line) if reached else {entry["after"]}
-            excluded |= merged_in
-            brought |= merged_in
+            excluded |= stretch
         elif kind in PUSHES and inside(entry["timestamp"]):
             commits = _read(folder / "push" / push_file(entry))
             brought.update(c["sha"] for c in commits)
@@ -167,13 +169,19 @@ def _list(repository: str, folder: Path, start: datetime, end: datetime) -> Repo
                 result.changes.append(Change(repository, sha[:7], DIRECT, parse(entry["timestamp"])))
     result.changes.sort(key=lambda c: (c.when, c.change))
 
-    # Cross-check: the main line as it stood at the period's end, from the last entry stamped before it; a commit
-    # pushed after the end is not on that part of the line, and its push is not read.
-    before_end = [e for e in activity if parse(e["timestamp"]) < end]
-    if before_end:
+    # Cross-check: the first-parent line from the branch's last commit. After a rewrite stamped at or after the
+    # period's end, today's line is not the one the period had, so it is named in place of the walk.
+    rewritten = sorted(
+        parse(e["timestamp"]) for e in activity if e["activity_type"] == "force_push" and parse(e["timestamp"]) >= end
+    )
+    if rewritten:
+        result.not_covered.append(
+            f"{repository}: not covered: history was rewritten after the period's end, on {day(rewritten[0])} at "
+            f"{clock(rewritten[0])} UTC, so the main line was not cross-checked"
+        )
+    elif main:
         by_sha = {c["sha"]: c for c in main}
-        tip = max(before_end, key=lambda e: parse(e["timestamp"]))["after"]
-        line, _ = _first_parent_line(tip, main_parents, None)
+        line, _ = _first_parent_line(main[0]["sha"], main_parents, None)
         for sha in line:
             dated = parse(by_sha[sha]["commit"]["committer"]["date"])
             if sha not in brought and start <= dated < end:

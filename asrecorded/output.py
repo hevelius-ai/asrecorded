@@ -7,6 +7,7 @@ would replace.
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import os
 from pathlib import Path
@@ -27,7 +28,8 @@ def write(settings: Settings) -> list[str]:
         ]
         path = write_changes(settings.output, lists)
     except Stop:
-        (settings.output / "record.md").unlink(missing_ok=True)
+        with contextlib.suppress(FileNotFoundError, NotADirectoryError):  # no record.md, or no output folder
+            (settings.output / "record.md").unlink()
         raise
     lines = [line for result in lists for line in summary_lines(result)]
     total = sum(len(result.changes) for result in lists)
@@ -49,7 +51,8 @@ def write_changes(output: Path, lists: list[RepositoryList]) -> Path:
                     table.writerow((change.repository, change.change, change.how, iso(change.when)))
         os.replace(temporary, final)
     except OSError as error:
-        temporary.unlink(missing_ok=True)
+        with contextlib.suppress(FileNotFoundError, NotADirectoryError):
+            temporary.unlink()
         raise Stop(
             f"Cannot write {final}: {error.strerror or error}. Close any program that has it open, then run write "
             "again. No record was written."
