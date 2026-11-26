@@ -13,4 +13,5 @@ Not designed, not reviewed, not built. One line each, with its reason. An item l
 - Reading AsBuild's saved verdict files, or showing an AsBuild verdict whose origin was checked (M5).
 - Statistics on samples; trend charts across periods.
 - `docs/relates-to.md` (the record's facts against the FINOS catalogue): writing, not building; the design session writes it after the first record (cut by the owner, 26 Nov 2026).
+- A rule option that requires an approval on the merged version (an approval on an earlier version is counted and shown instead; S0-6, owner, 26 Nov 2026).
 - Merge queues: if no Hevelius repository uses one, a pull request merged through a queue gets one "not covered" line instead of support (cut by the owner, 26 Nov 2026).
