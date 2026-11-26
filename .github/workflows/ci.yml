@@ -51,5 +51,8 @@ jobs:
       - name: Tests, with 100% line and branch coverage
         run: python -m pytest --cov --cov-report=term-missing --cov-fail-under=100
 
+      # It runs even when an earlier step failed: a story pull request's locked tests fail until its build
+      # merges (decision D-CI1), and the history check must still run on it.
       - name: History check (every commit of this pull request and of main)
+        if: ${{ !cancelled() }}
         run: python scripts/history_check.py
