@@ -17,7 +17,7 @@ select = ["E", "F", "W", "I", "B", "UP", "S"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S603", "S607"]
 "scripts/history_check.py" = ["S603", "S607"]
-"asrecorded/github.py" = ["S603", "S607"]  # it runs gh, with a fixed argument list and no shell
+"asrecorded/github.py" = ["S603", "S607"]  # it runs gh, or the program ASRECORDED_GH names, with a fixed argument list and no shell
 
 [tool.mypy]
 strict = true
