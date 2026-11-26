@@ -39,7 +39,7 @@ if not args or args[0] != "api" or writes.intersection(args):
 replies = json.loads((here / "replies.json").read_text(encoding="utf-8"))
 path = args[-1].split("?", 1)[0].strip("/")
 if path not in replies:
-    print(json.dumps({"message": "Not Found", "status": "404"}))
+    print(json.dumps([{"message": "Not Found", "documentation_url": "https://docs.github.com/rest", "status": "404"}]))
     print("gh: Not Found (HTTP 404)", file=sys.stderr)
     sys.exit(1)
 print(json.dumps([replies[path]]))
@@ -58,7 +58,11 @@ def commit(oid: str, parents: list[str], when: str) -> dict[str, Any]:
     return {
         "sha": oid,
         "parents": [{"sha": p} for p in parents],
-        "commit": {"author": {"name": "dana", "date": when}, "committer": {"name": "dana", "date": when}},
+        "commit": {
+            "message": "work",
+            "author": {"name": "dana", "date": when},
+            "committer": {"name": "dana", "date": when},
+        },
         "author": None,
         "committer": None,
     }
@@ -100,11 +104,14 @@ def history(repo: str, seed: int, steps: list[tuple[str, str, str, str, str]], s
                 "base": {"ref": "main"},
                 "head": {"ref": f"work-{name}", "sha": head},
                 "user": account(actor),
-                "merged_by": account(merger),
                 "html_url": f"https://github.com/{repo}/pull/{name}",
             }
-            pulls.append(pull)
-            replies[f"repos/{repo}/pulls/{name}"] = pull
+            pulls.append(pull)  # GitHub's list of pull requests does not say who merged them; the detail does
+            replies[f"repos/{repo}/pulls/{name}"] = pull | {
+                "merged": True,
+                "merged_by": account(merger),
+                "commits": len(work),
+            }
             replies[f"repos/{repo}/pulls/{name}/commits"] = work
             replies[f"repos/{repo}/pulls/{name}/reviews"] = []
             replies[f"repos/{repo}/issues/{name}/timeline"] = []
@@ -140,7 +147,7 @@ def history(repo: str, seed: int, steps: list[tuple[str, str, str, str, str]], s
 
 
 def shop() -> dict[str, Any]:
-    """The example set's acme/shop (the requirements, section 8)."""
+    """acme/shop with the example set's S1 facts (who merged, when); S2 to S4 add their own."""
     return history(
         "acme/shop",
         0x1000,
@@ -192,7 +199,11 @@ def screen(out: subprocess.CompletedProcess[str]) -> list[str]:
 
 def rows(tmp: Path, out: subprocess.CompletedProcess[str]) -> list[dict[str, str]]:
     path = tmp / "record" / "changes.csv"
-    assert path.is_file(), f"no changes.csv was written (exit {out.returncode})\n{out.stdout}\n{out.stderr}"
+    calls = tmp / "calls.txt"
+    asked = calls.read_text(encoding="utf-8") if calls.is_file() else "(nothing asked)\n"
+    assert path.is_file(), (
+        f"no changes.csv was written (exit {out.returncode})\n{out.stdout}\n{out.stderr}\nasked of gh:\n{asked}"
+    )
     with path.open(encoding="utf-8", newline="") as f:
         return [dict(row) for row in csv.DictReader(f)]
 
@@ -248,3 +259,4 @@ def test_S1_C5_a_project_the_sign_in_cannot_read_stops_collecting(tmp_path: Path
     assert out.returncode != 0
     assert not (tmp_path / "record" / "record.md").exists()
     assert not (tmp_path / "record" / "changes.csv").exists()
+    assert list((tmp_path / "record").glob("*")) == []

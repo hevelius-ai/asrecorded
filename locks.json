@@ -1,7 +1,7 @@
 {
   "files": {
     "tests/acceptance/S1/test_S1_list_of_changes.py": {
-      "sha256": "78b5f8e111a69232f71f126b52c45d9fac5ccb2ed9aca8c10b17f2b8e49f2f64",
+      "sha256": "c56e19c29169e38a1340c0e1991caffa3e8964b41c34b6e86e39d5f56db0a6c3",
       "tests": [
         "test_S1_C1_the_example_set_lists_exactly_eight_changes",
         "test_S1_C2_a_change_let_in_at_the_period_end_is_not_listed",

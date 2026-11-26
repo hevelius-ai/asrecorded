@@ -16,7 +16,7 @@ As the owner, I want every change that reached the default branch in a period li
 | S1-C2 | #17, merged at exactly 2026-12-01T00:00:00Z, has no row, and the screen shows the line `acme/shop: 8 changes (7 pull requests, 1 commit pushed directly)` | Request, sentence 2 |
 | S1-C3 | For `acme/squash` (squash merges) and `acme/joined` (merge commits), each pull request has one row, no commit of a pull request has a `pushed directly` row, and the screen shows `acme/squash: 2 changes (2 pull requests, 0 commits pushed directly)` and `acme/joined: 2 changes (2 pull requests, 0 commits pushed directly)` | Request, sentence 3 |
 | S1-C4 | For `acme/rewritten`, a force push on 2026-11-20 at 09:00 UTC by `lee` that brought in 3 commits is shown as `acme/rewritten: history rewritten on 2026-11-20 at 09:00 UTC by lee, 3 commits brought in`, and none of those commits has a row | Request, sentence 1; decision S0-2 |
-| S1-C5 | When the sign-in cannot read `acme/secret`, `run` stops with a non-zero exit, shows `Cannot read acme/secret with your GitHub sign-in. No record was written.`, and writes neither `record.md` nor `changes.csv` | Request, sentence 4 |
+| S1-C5 | When the sign-in cannot read `acme/secret`, `run` stops with a non-zero exit, shows `Cannot read acme/secret with your GitHub sign-in. No record was written.`, and writes no file in the output folder (neither `record.md` nor `changes.csv`) | Request, sentence 4 |
 
 ## Plain checklist (approved by the owner; the receipt quotes it word for word)
 
