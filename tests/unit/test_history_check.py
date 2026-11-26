@@ -50,6 +50,12 @@ SAMPLES = {
     "Linux home path after a JSON line break": ('"\\n/home/' + 'dana/x"', "local user path"),
     "Linux home path after a brace": ("{/home/" + "dana}", "local user path"),
     "Linux home path of a name starting with runner": ("/home/" + "runner-dana/x", "local user path"),
+    "Windows user path after a web address and a comma": ("https://example.org/a," + WINDOWS_PATH, "local user path"),
+    "Windows user path after a web address and a pipe": ("https://example.org/a|" + WINDOWS_PATH, "local user path"),
+    "Windows user path after a web address and an escaped line break": (
+        "https://example.org/a\\n" + WINDOWS_PATH,
+        "local user path",
+    ),
     "GitHub token": (TOKEN, "GitHub token"),
     "GitHub OAuth token": ("gh" + "o_" + "A1" * 18, "GitHub token"),
     "GitHub app token": ("gh" + "s_" + "A1" * 18, "GitHub token"),
@@ -258,6 +264,15 @@ def test_a_file_whose_name_holds_private_data_is_shown_withheld(repo: Path, caps
     assert code == 1
     assert "GitHub token in a file whose name is withheld" in out
     assert PERSONAL not in out
+
+
+def test_names_in_the_first_commit_are_read_whatever_the_git_settings(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_git("config", "log.showRoot", "false")
+    commit_file(f"notes-{PERSONAL}.txt", "plain\n")
+    code, out, _ = scan(capsys)
+    assert (code, "names: email address in a file name" in out) == (1, True)
 
 
 def test_a_file_name_added_by_a_merge_commit_is_a_finding(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:

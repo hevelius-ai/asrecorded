@@ -28,7 +28,7 @@ ALLOWED_EMAIL = re.compile(
 )
 # Path patterns are written with [/] so that this file's own text does not match them.
 # They are searched with web addresses removed, so that a web page whose path holds a home folder is no finding.
-WEB_ADDRESS = re.compile(r"https?://[^\s\"'<>)\]]+", re.IGNORECASE)
+WEB_ADDRESS = re.compile(r"https?://[^\s\"'<>)\]\\,;|]+", re.IGNORECASE)
 NAME = r"[A-Za-z0-9._-]"
 USER_PATHS = [
     re.compile(r"[A-Za-z](?::|%3A)(?:\\\\|\\|[/])+Users(?:\\\\|\\|[/])", re.IGNORECASE),  # Windows, file addresses
@@ -139,7 +139,9 @@ def scan_history(revision: str) -> tuple[list[Finding], int]:
             findings += [Finding(oid[:7], "commit details", k) for k in kinds_in(decode(content))]
         elif kind == "blob":
             findings += scan_content(oid[:7], names[oid], content)
-    every_path = run(["log", "--format=", "--name-only", "-z", "--no-renames", "--diff-merges=first-parent", revision])
+    every_path = run(
+        ["log", "--root", "--format=", "--name-only", "-z", "--no-renames", "--diff-merges=first-parent", revision]
+    )
     paths = {p.strip("\n") for p in text_of(every_path).split("\0")}
     findings += scan_names("names", sorted(p for p in paths if p))
     return findings, commits
