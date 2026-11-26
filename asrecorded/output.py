@@ -37,14 +37,21 @@ def write(settings: Settings) -> list[str]:
 
 def write_changes(output: Path, lists: list[RepositoryList]) -> Path:
     """One row per change, sorted by repository (in settings order), then time, then id."""
-    output.mkdir(parents=True, exist_ok=True)
     final = output / "changes.csv"
     temporary = output / "changes.csv.tmp"
-    with temporary.open("w", encoding="utf-8", newline="") as f:
-        table = csv.writer(f, lineterminator="\n")
-        table.writerow(COLUMNS)
-        for result in lists:
-            for change in sorted(result.changes, key=lambda c: (c.when, c.change)):
-                table.writerow((change.repository, change.change, change.how, iso(change.when)))
-    os.replace(temporary, final)
+    try:
+        output.mkdir(parents=True, exist_ok=True)
+        with temporary.open("w", encoding="utf-8", newline="") as f:
+            table = csv.writer(f, lineterminator="\n")
+            table.writerow(COLUMNS)
+            for result in lists:
+                for change in sorted(result.changes, key=lambda c: (c.when, c.change)):
+                    table.writerow((change.repository, change.change, change.how, iso(change.when)))
+        os.replace(temporary, final)
+    except OSError as error:
+        temporary.unlink(missing_ok=True)
+        raise Stop(
+            f"Cannot write {final}: {error.strerror or error}. Close any program that has it open, then run write "
+            "again. No record was written."
+        ) from None
     return final

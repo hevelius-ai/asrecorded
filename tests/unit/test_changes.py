@@ -47,6 +47,7 @@ def repository(
     main: list[dict[str, Any]],
     details: dict[int, tuple[int, list[dict[str, Any]]]] | None = None,
     pushes: dict[int, list[dict[str, Any]]] | None = None,
+    push_files: dict[tuple[str, str], list[dict[str, Any]]] | None = None,
     created: str = OUTSIDE,
 ) -> Path:
     folder = tmp_path / "acme__shop"
@@ -57,8 +58,12 @@ def repository(
     for n, (count, commits) in (details or {}).items():
         save(folder / "pr" / str(n) / "pull.json", {"number": n, "commits": count})
         save(folder / "pr" / str(n) / "commits.json", commits)
-    for after, commits in (pushes or {}).items():
-        save(folder / "push" / f"{h(after)}.json", commits)
+    for e in activity:  # one saved reply per push, named by its `before` and `after`
+        for n, commits in (pushes or {}).items():
+            if e["after"] == h(n):
+                save(folder / "push" / f"{e['before']}...{e['after']}.json", commits)
+    for (before, after), commits in (push_files or {}).items():
+        save(folder / "push" / f"{before}...{after}.json", commits)
     return folder
 
 
@@ -123,7 +128,7 @@ def test_a_merge_push_leaves_out_the_branch_and_keeps_the_main_line(tmp_path: Pa
         ("#5", "pull request", "2026-11-05T10:00:00Z"),
         (h(201)[:7], "pushed directly", "2026-11-05T10:00:00Z"),
     ]
-    assert result.not_covered == ["acme/shop: not covered: #5 has 251 commits, and GitHub lists only the first 250"]
+    assert result.not_covered == ["acme/shop: not covered: #5 has 251 commits, and GitHub lists only 250 of them"]
 
 
 def test_a_rewrite_is_listed_on_its_own(tmp_path: Path) -> None:
@@ -257,3 +262,129 @@ def test_one_of_each_is_counted_in_the_singular() -> None:
         "acme/shop: history rewritten on 2026-11-20 at 09:00 UTC by lee, 1 commit brought in",
         "acme/shop: not covered: example",
     ]
+
+
+def test_a_merge_queue_merge_is_explained_by_the_activity_history(tmp_path: Path) -> None:
+    folder = repository(
+        tmp_path,
+        pulls=[pull(8, "2026-11-07T10:00:00Z", 103)],
+        activity=[
+            entry("merge_queue_merge", h(1), h(103), "2026-11-07T10:00:00Z", actor="merge-queue"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[commit(103, [1, 102]), commit(102, [1]), commit(1, [], OUTSIDE)],
+        details={8: (1, [commit(102, [1])])},
+    )
+    result = list_changes("acme/shop", folder, START, END)
+    assert shown(result) == [("#8", "pull request", "2026-11-07T10:00:00Z")]
+    assert result.not_covered == []
+
+
+def test_a_pull_request_saved_twice_is_listed_once(tmp_path: Path) -> None:
+    folder = repository(
+        tmp_path,
+        pulls=[pull(11, "2026-11-02T10:00:00Z", 103), pull(11, "2026-11-02T10:00:00Z", 103)],
+        activity=[
+            entry("pr_merge", h(1), h(103), "2026-11-02T10:00:00Z"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[commit(103, [1]), commit(1, [], OUTSIDE)],
+        details={11: (1, [])},
+    )
+    assert shown(list_changes("acme/shop", folder, START, END)) == [("#11", "pull request", "2026-11-02T10:00:00Z")]
+
+
+def test_a_commit_pushed_after_the_period_is_not_called_not_covered(tmp_path: Path) -> None:
+    folder = repository(
+        tmp_path,
+        pulls=[],
+        activity=[
+            entry("push", h(2), h(3), "2026-12-01T00:00:00Z"),
+            entry("push", h(1), h(2), "2026-11-10T10:00:00Z"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[commit(3, [2], "2026-11-30T10:00:00Z"), commit(2, [1], "2026-11-10T10:00:00Z"), commit(1, [], OUTSIDE)],
+        pushes={2: [commit(2, [1])]},
+    )
+    result = list_changes("acme/shop", folder, START, END)
+    assert shown(result) == [(h(2)[:7], "pushed directly", "2026-11-10T10:00:00Z")]
+    assert result.not_covered == []
+
+
+def test_a_push_undone_by_a_force_push_back_counts_what_each_brought(tmp_path: Path) -> None:
+    folder = repository(
+        tmp_path,
+        pulls=[],
+        activity=[
+            entry("force_push", h(3), h(2), "2026-11-20T09:00:00Z"),
+            entry("push", h(2), h(3), "2026-11-10T10:00:00Z"),
+            entry("push", h(1), h(2), "2026-11-05T10:00:00Z"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[commit(2, [1]), commit(1, [], OUTSIDE)],
+        push_files={(h(1), h(2)): [commit(2, [1])], (h(2), h(3)): [commit(3, [2])], (h(3), h(2)): []},
+    )
+    result = list_changes("acme/shop", folder, START, END)
+    assert shown(result) == [
+        (h(2)[:7], "pushed directly", "2026-11-05T10:00:00Z"),
+        (h(3)[:7], "pushed directly", "2026-11-10T10:00:00Z"),
+    ]
+    assert summary_lines(result)[1] == (
+        "acme/shop: history rewritten on 2026-11-20 at 09:00 UTC by lee, 0 commits brought in"
+    )
+
+
+def test_a_fast_forward_merge_push_lists_only_the_pull_request(tmp_path: Path) -> None:
+    folder = repository(
+        tmp_path,
+        pulls=[pull(9, "2026-11-08T10:00:00Z", 3)],
+        activity=[
+            entry("push", h(1), h(3), "2026-11-08T10:00:00Z"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[commit(3, [2]), commit(2, [1]), commit(1, [], OUTSIDE)],
+        details={9: (2, [commit(2, [1]), commit(3, [2])])},
+        pushes={3: [commit(2, [1]), commit(3, [2])]},
+    )
+    result = list_changes("acme/shop", folder, START, END)
+    assert shown(result) == [("#9", "pull request", "2026-11-08T10:00:00Z")]
+    assert result.not_covered == []
+
+
+def test_a_rebase_merge_brings_in_its_whole_range(tmp_path: Path) -> None:
+    folder = repository(
+        tmp_path,
+        pulls=[pull(4, "2026-11-04T10:00:00Z", 13)],
+        activity=[
+            entry("branch_creation", ZERO, h(13), "2026-11-06T10:00:00Z"),
+            entry("pr_merge", h(1), h(13), "2026-11-04T10:00:00Z"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[commit(13, [12]), commit(12, [11]), commit(11, [1]), commit(1, [], OUTSIDE)],
+        details={4: (3, [])},
+        pushes={13: [commit(11, [1]), commit(12, [11]), commit(13, [12])]},
+    )
+    result = list_changes("acme/shop", folder, START, END)
+    assert shown(result) == [("#4", "pull request", "2026-11-04T10:00:00Z")]
+    assert result.not_covered == []
+
+
+def test_a_push_at_the_period_start_is_listed_and_250_commits_are_all_listed(tmp_path: Path) -> None:
+    folder = repository(
+        tmp_path,
+        pulls=[pull(6, "2026-11-02T10:00:00Z", 103)],
+        activity=[
+            entry("pr_merge", h(2), h(103), "2026-11-02T10:00:00Z"),
+            entry("push", h(1), h(2), "2026-11-01T00:00:00Z"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[commit(103, [2]), commit(2, [1], "2026-11-01T00:00:00Z"), commit(1, [], OUTSIDE)],
+        details={6: (250, [])},
+        pushes={2: [commit(2, [1], "2026-11-01T00:00:00Z")]},
+    )
+    result = list_changes("acme/shop", folder, START, END)
+    assert shown(result) == [
+        (h(2)[:7], "pushed directly", "2026-11-01T00:00:00Z"),
+        ("#6", "pull request", "2026-11-02T10:00:00Z"),
+    ]
+    assert result.not_covered == []

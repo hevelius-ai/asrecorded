@@ -36,6 +36,8 @@ def load(path: Path) -> Settings:
         raise Stop(f"Cannot find the settings file {path}.") from None
     except tomllib.TOMLDecodeError as error:
         raise Stop(f"The settings file {path} is not valid TOML: {error}.") from None
+    except OSError:
+        raise Stop(f"Cannot read the settings file {path}.") from None
     repositories = raw.get("repositories")
     if not isinstance(repositories, list) or not repositories or not all(isinstance(r, str) for r in repositories):
         raise Stop('The settings need "repositories": a list of GitHub repositories written as owner/name.')
@@ -43,6 +45,8 @@ def load(path: Path) -> Settings:
         owner, _, rest = name.partition("/")
         if not owner or not rest or "/" in rest:
             raise Stop(f'"{name}" in "repositories" is not written as owner/name.')
+        if repositories.count(name) > 1:
+            raise Stop(f'"{name}" is listed twice in "repositories".')
     start, end = _time(raw, "start"), _time(raw, "end")
     if start >= end:
         raise Stop('The settings\' "start" must be before "end".')
@@ -63,7 +67,9 @@ def _time(raw: dict[str, Any], key: str) -> datetime:
     try:
         return times.parse(raw.get(key))
     except ValueError:
-        raise Stop(f'The settings need "{key}" as a UTC time ending in Z, such as 2026-11-01T00:00:00Z.') from None
+        raise Stop(
+            f'The settings need "{key}" as a UTC time in quotes, ending in Z, such as "2026-11-01T00:00:00Z".'
+        ) from None
 
 
 def _words(raw: dict[str, Any], key: str) -> tuple[str, ...]:

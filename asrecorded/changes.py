@@ -1,7 +1,8 @@
 """The list of changes (design §3 step 1), built from the saved data only.
 
 A change is a merged pull request of the period, or a commit a push of the period brought straight to the default
-branch. A commit that is part of a merged pull request is never a direct push: those a `pr_merge` entry brought in,
+branch. A commit that is part of a merged pull request is never a direct push: those a `pr_merge` entry (or a
+`merge_queue_merge` entry, GitHub's type for a merge queue's merge) brought in,
 every merged pull request's `merge_commit_sha`, the commits in its saved `commits.json`, and, for a push whose `after`
 is a `merge_commit_sha` (a merge bot, or a person's own merge), the pushed commits off that push's first-parent line.
 """
@@ -14,10 +15,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from asrecorded.collect import push_file
 from asrecorded.errors import Stop
 from asrecorded.times import clock, count, day, parse
 
 PULL, DIRECT = "pull request", "pushed directly"
+MERGES = ("pr_merge", "merge_queue_merge")
+PUSHES = ("push", "force_push", "branch_creation")
 REQUIRED = ("repo.json", "pulls.json", "activity.json", "main_commits.json")
 LISTED = 250  # GitHub lists at most 250 commits for a pull request
 
@@ -116,28 +120,34 @@ def _list(repository: str, folder: Path, start: datetime, end: datetime) -> Repo
     brought: set[str] = set()  # every commit an activity entry explains, for the cross-check
     main_parents = _parents(main)
 
+    numbers: set[int] = set()  # a pull request saved twice (paging while another one closes) is listed once
     for pull in merged:
-        if pull["base"]["ref"] == info["default_branch"] and inside(pull["merged_at"]):
+        if (
+            pull["base"]["ref"] == info["default_branch"]
+            and inside(pull["merged_at"])
+            and pull["number"] not in numbers
+        ):
             number = pull["number"]
+            numbers.add(number)
             detail = _read(folder / "pr" / str(number) / "pull.json")
             excluded.update(c["sha"] for c in _read(folder / "pr" / str(number) / "commits.json"))
             if detail["commits"] > LISTED:
                 result.not_covered.append(
                     f"{repository}: not covered: #{number} has {detail['commits']} commits, "
-                    f"and GitHub lists only the first {LISTED}"
+                    f"and GitHub lists only {LISTED} of them"
                 )
             result.changes.append(Change(repository, f"#{number}", PULL, parse(pull["merged_at"])))
 
     pushes: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
     for entry in sorted(activity, key=lambda e: parse(e["timestamp"])):
         kind = entry["activity_type"]
-        if kind == "pr_merge":
+        if kind in MERGES:
             line, reached = _first_parent_line(entry["after"], main_parents, entry["before"])
             merged_in = set(line) if reached else {entry["after"]}
             excluded |= merged_in
             brought |= merged_in
-        elif kind in ("push", "force_push", "branch_creation") and inside(entry["timestamp"]):
-            commits = _read(folder / "push" / f"{entry['after']}.json")
+        elif kind in PUSHES and inside(entry["timestamp"]):
+            commits = _read(folder / "push" / push_file(entry))
             brought.update(c["sha"] for c in commits)
             if kind == "force_push":
                 when = parse(entry["timestamp"])
@@ -157,9 +167,13 @@ def _list(repository: str, folder: Path, start: datetime, end: datetime) -> Repo
                 result.changes.append(Change(repository, sha[:7], DIRECT, parse(entry["timestamp"])))
     result.changes.sort(key=lambda c: (c.when, c.change))
 
-    if main:
+    # Cross-check: the main line as it stood at the period's end, from the last entry stamped before it; a commit
+    # pushed after the end is not on that part of the line, and its push is not read.
+    before_end = [e for e in activity if parse(e["timestamp"]) < end]
+    if before_end:
         by_sha = {c["sha"]: c for c in main}
-        line, _ = _first_parent_line(main[0]["sha"], main_parents, None)
+        tip = max(before_end, key=lambda e: parse(e["timestamp"]))["after"]
+        line, _ = _first_parent_line(tip, main_parents, None)
         for sha in line:
             dated = parse(by_sha[sha]["commit"]["committer"]["date"])
             if sha not in brought and start <= dated < end:

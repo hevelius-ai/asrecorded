@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from asrecorded import github
-from asrecorded.collect import collect
+from asrecorded.collect import MARKER, collect
 from asrecorded.errors import Stop
 from asrecorded.settings import load
 
@@ -63,13 +63,22 @@ def shop() -> dict[str, Any]:
     }
 
 
-def settings_in(tmp_path: Path, repositories: str = '"acme/shop"') -> Any:
+def settings_in(tmp_path: Path, repositories: str = '"acme/shop"', extra: str = "") -> Any:
     path = tmp_path / "settings.toml"
     path.write_text(
-        f'repositories = [{repositories}]\nstart = "2026-11-01T00:00:00Z"\nend = "2026-12-01T00:00:00Z"\n',
+        f'repositories = [{repositories}]\nstart = "2026-11-01T00:00:00Z"\nend = "2026-12-01T00:00:00Z"\n{extra}',
         encoding="utf-8",
     )
     return load(path)
+
+
+def earlier_data(tmp_path: Path) -> Path:
+    """A data folder an earlier collect saved."""
+    data = tmp_path / "data"
+    (data / "acme__shop").mkdir(parents=True)
+    (data / ".gitignore").write_text(MARKER, encoding="utf-8")
+    (data / "acme__shop" / "repo.json").write_text("earlier", encoding="utf-8")
+    return data / "acme__shop" / "repo.json"
 
 
 def saved(tmp_path: Path, name: str) -> Any:
@@ -82,7 +91,8 @@ def test_collect_saves_every_reply_the_period_needs(tmp_path: Path, monkeypatch:
     lines = collect(settings_in(tmp_path))
     data = tmp_path / "data"
     assert lines == [f"Saved GitHub's replies for 1 repository in {data}."]
-    assert (data / ".gitignore").read_text(encoding="utf-8") == "*\n"
+    assert (data / ".gitignore").read_text(encoding="utf-8") == MARKER
+    assert MARKER.splitlines()[-1] == "*"
     assert saved(tmp_path, "repo.json")["default_branch"] == "main"
     assert [p["number"] for p in saved(tmp_path, "pulls.json")] == [11, 17, 19]
     assert len(saved(tmp_path, "activity.json")) == 5
@@ -91,10 +101,14 @@ def test_collect_saves_every_reply_the_period_needs(tmp_path: Path, monkeypatch:
     names = sorted(p.name for p in (data / "acme__shop" / "pr" / "11").iterdir())
     assert names == ["check_runs.json", "commits.json", "pull.json", "reviews.json", "statuses.json", "timeline.json"]
     assert not (data / "acme__shop" / "pr" / "17").exists()
-    assert saved(tmp_path, "push/c1.json") == [{"sha": "c1"}]
-    assert saved(tmp_path, "push/c3.json") == [{"sha": "c0"}]
-    assert saved(tmp_path, "push/c0.json") == [{"sha": "c0"}]
-    assert sorted(p.name for p in (data / "acme__shop" / "push").iterdir()) == ["c0.json", "c1.json", "c3.json"]
+    assert saved(tmp_path, "push/c0...c1.json") == [{"sha": "c1"}]
+    assert saved(tmp_path, "push/c2...c3.json") == [{"sha": "c0"}]
+    assert saved(tmp_path, f"push/{ZERO}...c0.json") == [{"sha": "c0"}]
+    assert sorted(p.name for p in (data / "acme__shop" / "push").iterdir()) == [
+        f"{ZERO}...c0.json",
+        "c0...c1.json",
+        "c2...c3.json",
+    ]
     assert "repos/acme/shop/pulls?state=closed&base=main&per_page=100" in calls
     assert "repos/acme/shop/activity?ref=main&per_page=100" in calls
     assert "repos/acme/shop/commits?sha=main&per_page=100" in calls
@@ -107,8 +121,7 @@ def test_collect_saves_every_reply_the_period_needs(tmp_path: Path, monkeypatch:
 
 
 def test_a_new_collect_replaces_the_data_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    old = tmp_path / "data" / "acme__gone"
-    old.mkdir(parents=True)
+    earlier_data(tmp_path).parent.rename(tmp_path / "data" / "acme__gone")
     (tmp_path / "data.old").mkdir()
     (tmp_path / "data.collecting").mkdir()
     monkeypatch.setattr(github, "pages", fake_pages(shop(), []))
@@ -120,9 +133,7 @@ def test_a_new_collect_replaces_the_data_folder(tmp_path: Path, monkeypatch: pyt
 def test_an_unreadable_repository_stops_and_leaves_the_data_folder_as_it_was(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    before = tmp_path / "data" / "acme__shop" / "repo.json"
-    before.parent.mkdir(parents=True)
-    before.write_text("earlier", encoding="utf-8")
+    before = earlier_data(tmp_path)
     monkeypatch.setattr(github, "pages", fake_pages(shop(), []))
     with pytest.raises(Stop) as stop:
         collect(settings_in(tmp_path, '"acme/shop", "acme/secret"'))
@@ -177,3 +188,55 @@ def test_replies_of_an_unexpected_shape_stop_collecting(
     with pytest.raises(Stop) as stop:
         collect(settings_in(tmp_path))
     assert stop.value.message == message
+
+
+def test_a_data_folder_collect_did_not_make_is_never_replaced(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "notes.txt").write_text("mine", encoding="utf-8")
+    monkeypatch.setattr(github, "pages", fake_pages(shop(), []))
+    with pytest.raises(Stop) as stop:
+        collect(settings_in(tmp_path, extra='data = "."\n'))
+    assert stop.value.message == (
+        f'The data folder {tmp_path} holds files that collect did not save. Name a new or empty folder as "data" '
+        "in the settings. No record was written."
+    )
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["notes.txt", "settings.toml"]
+
+
+def test_a_file_named_as_the_data_folder_is_never_replaced(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "data").write_text("mine", encoding="utf-8")
+    monkeypatch.setattr(github, "pages", fake_pages(shop(), []))
+    with pytest.raises(Stop):
+        collect(settings_in(tmp_path))
+    assert (tmp_path / "data").read_text(encoding="utf-8") == "mine"
+
+
+def test_an_empty_data_folder_is_used(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "data").mkdir()
+    monkeypatch.setattr(github, "pages", fake_pages(shop(), []))
+    collect(settings_in(tmp_path))
+    assert (tmp_path / "data" / "acme__shop" / "repo.json").is_file()
+
+
+@pytest.mark.parametrize("failing", ["data.old", "data"])
+def test_a_failed_swap_keeps_the_earlier_data_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
+) -> None:
+    before = earlier_data(tmp_path)
+    rename = Path.rename
+
+    def refuse(self: Path, target: Any) -> Path:
+        if Path(target).name == failing and self.name != "data.old":
+            raise PermissionError(13, "Access is denied")
+        return rename(self, target)
+
+    monkeypatch.setattr(github, "pages", fake_pages(shop(), []))
+    monkeypatch.setattr(Path, "rename", refuse)
+    with pytest.raises(Stop) as stop:
+        collect(settings_in(tmp_path))
+    data = tmp_path / "data"
+    assert stop.value.message == (
+        f"Cannot put the new data folder in place of {data}: Access is denied. The earlier data folder was kept. "
+        "No record was written."
+    )
+    assert before.read_text(encoding="utf-8") == "earlier"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["data", "settings.toml"]

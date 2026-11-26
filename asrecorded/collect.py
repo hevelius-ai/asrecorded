@@ -18,34 +18,64 @@ from asrecorded.times import count, parse
 
 ZERO = "0" * 40
 PUSHES = {"push", "force_push", "branch_creation"}
+# The raw replies carry email addresses and titles (A12): git ignores them wherever the folder lies. The same file
+# marks a folder collect saved, the only kind of folder collect ever replaces.
+MARKER = "# Saved by AsRecorded's collect: GitHub's raw replies, which hold email addresses. Never commit them.\n*\n"
 
 
 def collect(settings: Settings) -> list[str]:
     final = settings.data
+    if final.exists() and not _replaceable(final):
+        raise Stop(
+            f'The data folder {final} holds files that collect did not save. Name a new or empty folder as "data" '
+            "in the settings. No record was written."
+        )
     staging = final.with_name(final.name + ".collecting")
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True)
     try:
-        # The raw replies carry email addresses and titles (A12): git ignores them wherever the folder lies.
-        (staging / ".gitignore").write_text("*\n", encoding="utf-8", newline="\n")
+        (staging / ".gitignore").write_text(MARKER, encoding="utf-8", newline="\n")
         for repository in settings.repositories:
             _collect_repository(repository, settings, staging / folder_name(repository))
+        _swap(staging, final)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    _swap(staging, final)
     return [f"Saved GitHub's replies for {count(len(settings.repositories), 'repository', 'repositories')} in {final}."]
 
 
+def _replaceable(folder: Path) -> bool:
+    """An empty folder, or one an earlier collect saved."""
+    if not folder.is_dir():
+        return False
+    marker = folder / ".gitignore"
+    return not any(folder.iterdir()) or (marker.is_file() and marker.read_text(encoding="utf-8") == MARKER)
+
+
 def _swap(staging: Path, final: Path) -> None:
-    if final.exists():
-        old = final.with_name(final.name + ".old")
-        shutil.rmtree(old, ignore_errors=True)
+    """Put the complete new folder in the data folder's place; on any failure keep the earlier one."""
+    if not final.exists():
+        staging.rename(final)
+        return
+    old = final.with_name(final.name + ".old")
+    shutil.rmtree(old, ignore_errors=True)
+    try:
         final.rename(old)
+    except OSError as error:
+        raise _kept(final, error) from None
+    try:
         staging.rename(final)
-        shutil.rmtree(old)
-    else:
-        staging.rename(final)
+    except OSError as error:
+        old.rename(final)
+        raise _kept(final, error) from None
+    shutil.rmtree(old, ignore_errors=True)
+
+
+def _kept(final: Path, error: OSError) -> Stop:
+    return Stop(
+        f"Cannot put the new data folder in place of {final}: {error.strerror or error}. "
+        "The earlier data folder was kept. No record was written."
+    )
 
 
 def _collect_repository(repository: str, settings: Settings, folder: Path) -> None:
@@ -87,7 +117,13 @@ def _collect_replies(repository: str, default: str, info: dict[str, Any], settin
             _save(base / "statuses.json", github.get_list(f"{r}/commits/{head}/statuses?per_page=100"))
     for entry in activity:
         if entry["activity_type"] in PUSHES and _inside(entry["timestamp"], settings):
-            _save(folder / "push" / f"{entry['after']}.json", _brought_in(r, entry))
+            _save(folder / "push" / push_file(entry), _brought_in(r, entry))
+
+
+def push_file(entry: dict[str, Any]) -> str:
+    """One saved reply per push, named by its `before` and `after`: two pushes that end on the same commit (a push
+    undone by a force push back) keep their own replies, and the same two ends always bring in the same commits."""
+    return f"{entry['before']}...{entry['after']}.json"
 
 
 def _brought_in(r: str, entry: dict[str, Any]) -> list[Any]:

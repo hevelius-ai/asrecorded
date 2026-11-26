@@ -57,9 +57,15 @@ def test_a_settings_file_that_is_not_toml_is_refused(tmp_path: Path) -> None:
     assert stop.value.message.startswith(f"The settings file {path} is not valid TOML: ")
 
 
+def test_a_folder_given_as_the_settings_file_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(Stop) as stop:
+        load(tmp_path)
+    assert stop.value.message == f"Cannot read the settings file {tmp_path}."
+
+
 REPOSITORIES = 'The settings need "repositories": a list of GitHub repositories written as owner/name.'
-START = 'The settings need "start" as a UTC time ending in Z, such as 2026-11-01T00:00:00Z.'
-END = 'The settings need "end" as a UTC time ending in Z, such as 2026-11-01T00:00:00Z.'
+START = 'The settings need "start" as a UTC time in quotes, ending in Z, such as "2026-11-01T00:00:00Z".'
+END = 'The settings need "end" as a UTC time in quotes, ending in Z, such as "2026-11-01T00:00:00Z".'
 TIMES = 'start = "2026-11-01T00:00:00Z"\nend = "2026-12-01T00:00:00Z"\n'
 
 
@@ -74,6 +80,7 @@ TIMES = 'start = "2026-11-01T00:00:00Z"\nend = "2026-12-01T00:00:00Z"\n'
         ('repositories = ["/shop"]\n' + TIMES, '"/shop" in "repositories" is not written as owner/name.'),
         ('repositories = ["acme/"]\n' + TIMES, '"acme/" in "repositories" is not written as owner/name.'),
         ('repositories = ["a/b/c"]\n' + TIMES, '"a/b/c" in "repositories" is not written as owner/name.'),
+        ('repositories = ["acme/shop", "acme/shop"]\n' + TIMES, '"acme/shop" is listed twice in "repositories".'),
         ('repositories = ["acme/shop"]\nend = "2026-12-01T00:00:00Z"\n', START),
         ('repositories = ["acme/shop"]\nstart = "2026-11-01T00:00:00"\nend = "2026-12-01T00:00:00Z"\n', START),
         ('repositories = ["acme/shop"]\nstart = "yesterdayZ"\nend = "2026-12-01T00:00:00Z"\n', START),

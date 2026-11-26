@@ -91,3 +91,25 @@ def test_a_failed_write_with_no_earlier_record_writes_nothing(tmp_path: Path) ->
     with pytest.raises(Stop):
         write(settings_in(tmp_path))  # type: ignore[arg-type]
     assert not (tmp_path / "record").exists()
+
+
+def test_a_write_that_fails_keeps_the_earlier_changes_file_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    earlier = tmp_path / "record" / "changes.csv"
+    earlier.parent.mkdir()
+    earlier.write_text("the earlier list\n", encoding="utf-8")
+
+    def refuse(source: object, target: object) -> None:
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr("asrecorded.output.os.replace", refuse)
+    shop = RepositoryList("acme/shop", [Change("acme/shop", "#11", "pull request", parse("2026-11-02T10:00:00Z"))])
+    with pytest.raises(Stop) as stop:
+        write_changes(tmp_path / "record", [shop])
+    assert stop.value.message == (
+        f"Cannot write {earlier}: Access is denied. Close any program that has it open, then run write again. "
+        "No record was written."
+    )
+    assert earlier.read_text(encoding="utf-8") == "the earlier list\n"
+    assert sorted(x.name for x in earlier.parent.iterdir()) == ["changes.csv"]
