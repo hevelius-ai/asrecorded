@@ -29,7 +29,7 @@ Estimate per step (agent hours): design and setup 2.0; S0 2.5; tooling 1.0; S1 3
 
 ## S0: spike (kill gate)
 
-Throwaway code, outside the repository, never merged. Every "to prove" line of the requirements' section 6 is run with `gh api --method GET` against the M4 repositories; public repositories are used only where Hevelius has no case (auto-merge, merge queue, rebase merges, dismissed approvals). The coding agents' account names come from each vendor's own documents, with the URL and the date read. Output: `docs/spike-S0.md` (this pull request) and a decision for the owner on each fact that differs from the requirements. Stop and report.
+Throwaway code, outside the repository, never merged. Every "to prove" line of the requirements' section 6 is run with `gh api --method GET` against the M4 repositories; public repositories are used where Hevelius has no case, or no clear one (auto-merge, merge queues, bot merges, dismissed approvals). The coding agents' account names come from each vendor's own documents, with the URL and the date read. Output: `docs/spike-S0.md` (this pull request) and a decision for the owner on each fact that differs from the requirements. Stop and report.
 
 ## Tooling (after the kill gate, its own pull request)
 
