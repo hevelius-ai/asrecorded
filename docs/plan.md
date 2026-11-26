@@ -33,7 +33,7 @@ Throwaway code, outside the repository, never merged. Every "to prove" line of t
 
 ## Tooling (after the kill gate, its own pull request)
 
-`pyproject.toml` (Python 3.12 or newer; the standard library only at run time; development tools pinned to exact versions with hashes), the CI workflow (lint, format, types, tests with 100% coverage, the history check; Ubuntu and Windows), `scripts/history_check.py` (no email address except GitHub no-reply addresses and the attribution line, no local paths, no key patterns, across every commit's content and metadata).
+`pyproject.toml` (Python 3.12 or newer; the standard library only at run time; development tools pinned to exact versions with hashes), the CI workflow (lint, format, types, tests with 100% coverage, the history check; Ubuntu and Windows), `scripts/history_check.py` (no email address except GitHub no-reply addresses, GitHub's own address on merges made on its site, and the attribution line, no local paths, no key patterns, across every commit's content and metadata).
 
 ## Design (frozen at the end of S0; open points marked "to prove")
 
