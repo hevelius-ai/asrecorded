@@ -15,7 +15,7 @@
 | Review cost | $80 | $65 | $100 |
 | Working days | 10 | 8 | 12 |
 
-Estimate per step (agent hours): design and setup 2.0; S0 2.5; tooling 1.0; S1 3.5; S2 4.0; S3 2.0; S4 3.5; release 2.0 (after the cut of `docs/relates-to.md`); about 20 in all. At 1.5 times any step's estimate: stop and report.
+Estimate per step (agent hours): design and setup 2.0; S0 2.5; tooling 1.0; S1 3.5; S2 4.0; S3 2.0; S4 3.5; release 2.0 (after the cut of `docs/relates-to.md`); 20.5 in all, against the budget of 20 and the hard stop of 22. At 1.5 times any step's estimate: stop and report.
 
 ## Records
 
