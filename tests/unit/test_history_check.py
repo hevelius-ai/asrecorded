@@ -44,6 +44,12 @@ SAMPLES = {
     "Linux home path": ("/home/" + "dana/project", "local user path"),
     "Linux home path without a slash after it": ("HOME=/home/" + "dana", "local user path"),
     "Linux home path with a dot in the name": ("/home/" + "dana.smith/project", "local user path"),
+    "Linux home path in a file address": ("file:///home/" + "dana/x.whl", "local user path"),
+    "Linux home path in a script's first line": ("#!/home/" + "dana/.venv/bin/python", "local user path"),
+    "Linux home path after a compiler flag": ("-I/home/" + "dana/include", "local user path"),
+    "Linux home path after a JSON line break": ('"\\n/home/' + 'dana/x"', "local user path"),
+    "Linux home path after a brace": ("{/home/" + "dana}", "local user path"),
+    "Linux home path of a name starting with runner": ("/home/" + "runner-dana/x", "local user path"),
     "GitHub token": (TOKEN, "GitHub token"),
     "GitHub OAuth token": ("gh" + "o_" + "A1" * 18, "GitHub token"),
     "GitHub app token": ("gh" + "s_" + "A1" * 18, "GitHub token"),
@@ -89,6 +95,9 @@ def test_ordinary_code_and_text_are_not_findings() -> None:
             "git clone git" + AT + "github.com:hevelius-ai/asrecorded.git",
             "working folder /home/" + "runner/work/asrecorded",
             "https://example.org/home/" + "about/team",
+            "https://example.org/Users/" + "about",
+            "gh api /users/" + "dana --method GET",
+            'GET "/users/' + 'dana/repos"',
             "see the folder Users/ and /home/ in the docs",
         ]
     )
@@ -101,9 +110,25 @@ def test_each_kind_is_listed_once_in_a_fixed_order() -> None:
 
 
 def test_utf16_text_is_read_with_or_without_a_byte_order_mark() -> None:
-    assert history_check.decode(("﻿" + WINDOWS_PATH).encode("utf-16-le")) == WINDOWS_PATH
-    assert history_check.decode(WINDOWS_PATH.encode("utf-16-le")) == WINDOWS_PATH
+    assert WINDOWS_PATH in history_check.decode(("﻿" + WINDOWS_PATH).encode("utf-16-le"))
+    assert WINDOWS_PATH in history_check.decode(WINDOWS_PATH.encode("utf-16-le"))
     assert history_check.decode(b"plain text") == "plain text"
+
+
+def test_plain_text_after_utf16_text_is_read() -> None:
+    data = ("﻿notes\r\n").encode("utf-16-le") + f"token = {TOKEN}\n".encode("ascii")
+    assert history_check.kinds_in(history_check.decode(data)) == ["GitHub token"]
+
+
+def test_utf32_text_with_a_byte_order_mark_is_read() -> None:
+    assert history_check.kinds_in(history_check.decode(("﻿" + TOKEN).encode("utf-32"))) == ["GitHub token"]
+
+
+def test_binary_content_is_not_searched_for_email_addresses_but_for_everything_else() -> None:
+    data = b"\x89PNG\x00\x00" + PERSONAL.encode("ascii") + b"\x00" + TOKEN.encode("ascii")
+    assert history_check.kinds_in(history_check.decode(data), binary=history_check.is_binary(data)) == ["GitHub token"]
+    assert history_check.is_binary(b"plain text") is False
+    assert history_check.is_binary(("﻿" + PERSONAL).encode("utf-16-le")) is False
 
 
 # A real repository in a temporary folder, with no global or system git settings.
@@ -227,6 +252,57 @@ def test_an_address_in_a_file_name_is_a_finding_without_printing_it(
     assert PERSONAL not in out
 
 
+def test_a_file_whose_name_holds_private_data_is_shown_withheld(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    commit_file(f"notes-{PERSONAL}.txt", f"token = {TOKEN}\n")
+    code, out, _ = scan(capsys)
+    assert code == 1
+    assert "GitHub token in a file whose name is withheld" in out
+    assert PERSONAL not in out
+
+
+def test_a_file_name_added_by_a_merge_commit_is_a_finding(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    commit_file("README.md", "A plain file.\n")
+    run_git("switch", "-q", "-c", "side")
+    commit_file("side.txt", "side work\n")
+    run_git("switch", "-q", "main")
+    commit_file("main.txt", "main work\n")
+    run_git("merge", "-q", "--no-ff", "--no-commit", "side")
+    Path(f"from-{PERSONAL}.txt").write_text("plain\n", encoding="utf-8")
+    run_git("add", ".")
+    run_git("commit", "-q", "-m", "merge side")
+    code, out, _ = scan(capsys)
+    assert (code, "names: email address in a file name" in out) == (1, True)
+
+
+def test_a_file_name_that_is_not_utf8_does_not_stop_the_check(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    commit_file("README.md", "A plain file.\n")
+    tree = subprocess.run(["git", "write-tree"], check=True, capture_output=True, text=True).stdout.strip()
+    blob = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"], input=b"plain\n", check=True, capture_output=True
+    ).stdout.strip()
+    entries = subprocess.run(["git", "ls-tree", tree], check=True, capture_output=True).stdout
+    entries += b"100644 blob " + blob + b"\tname-\xff\x0c.txt\n"
+    new_tree = subprocess.run(["git", "mktree"], input=entries, check=True, capture_output=True).stdout.strip()
+    commit = subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=tester",
+            "-c",
+            f"user.email={ALLOWED[0]}",
+            "commit-tree",
+            new_tree.decode(),
+            "-p",
+            "HEAD",
+        ],
+        input=b"odd name\n",
+        check=True,
+        capture_output=True,
+    ).stdout.strip()
+    run_git("update-ref", "refs/heads/main", commit.decode())
+    assert scan(capsys) == (0, "history check: 2 commits scanned, clean\n", "")
+
+
 def test_a_token_added_by_a_merge_commit_is_a_finding(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     commit_file("README.md", "A plain file.\n")
     run_git("switch", "-q", "-c", "side")
@@ -249,7 +325,22 @@ def test_staged_changes_are_scanned_with_the_staged_flag(repo: Path, capsys: pyt
     assert (code, "staged: local user path in file notes.txt" in out) == (1, True)
     Path("notes.txt").write_text("plain\n", encoding="utf-8")
     run_git("add", "notes.txt")
-    assert scan(capsys, "--staged") == (0, "history check: 1 staged file(s) scanned, clean\n", "")
+    assert scan(capsys, "--staged") == (0, "history check: 1 staged change(s) scanned, clean\n", "")
+
+
+def test_staged_file_names_are_scanned(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    commit_file("README.md", "A plain file.\n")
+    Path(f"notes-{PERSONAL}.txt").write_text("plain\n", encoding="utf-8")
+    run_git("add", ".")
+    code, out, _ = scan(capsys, "--staged")
+    assert (code, "staged: email address in a file name" in out, PERSONAL in out) == (1, True, False)
+
+
+def test_a_staged_deletion_alone_exits_0(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    commit_file("README.md", "A plain file.\n")
+    commit_file("old.txt", "old\n")
+    run_git("rm", "-q", "old.txt")
+    assert scan(capsys, "--staged") == (0, "history check: 1 staged change(s) scanned, clean\n", "")
 
 
 def test_nothing_staged_exits_2(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:

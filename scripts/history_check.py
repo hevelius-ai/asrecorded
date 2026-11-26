@@ -27,15 +27,16 @@ ALLOWED_EMAIL = re.compile(
     re.IGNORECASE,
 )
 # Path patterns are written with [/] so that this file's own text does not match them.
-BEFORE_PATH = r"(?:^|(?<=[\s\"'=(\[,;:<>`]))"
+# They are searched with web addresses removed, so that a web page whose path holds a home folder is no finding.
+WEB_ADDRESS = re.compile(r"https?://[^\s\"'<>)\]]+", re.IGNORECASE)
+NAME = r"[A-Za-z0-9._-]"
+USER_PATHS = [
+    re.compile(r"[A-Za-z](?::|%3A)(?:\\\\|\\|[/])+Users(?:\\\\|\\|[/])", re.IGNORECASE),  # Windows, file addresses
+    re.compile(r"[/][a-z][/]Users[/]", re.IGNORECASE),  # Git Bash
+    re.compile(rf"[/]Users[/]{NAME}+"),  # macOS (capital U only, so GitHub's API routes are no finding)
+    re.compile(rf"[/]home[/](?!runner(?!{NAME})){NAME}+"),  # Linux, except the CI runner's own folder
+]
 PATTERNS: dict[str, re.Pattern[str]] = {
-    "local user path": re.compile(
-        r"[A-Za-z](?::|%3A)(?:\\\\|\\|[/])+Users(?:\\\\|\\|[/])"  # Windows, with either slash, and file addresses
-        r"|[/][a-z][/]Users[/]"  # Git Bash
-        rf"|{BEFORE_PATH}[/]Users[/][A-Za-z0-9._-]+"  # macOS
-        rf"|{BEFORE_PATH}[/]home[/](?!runner\b)[A-Za-z0-9._-]+",  # Linux, except the CI runner's own folder
-        re.IGNORECASE | re.MULTILINE,
-    ),
     "GitHub token": re.compile(r"gh[opsur]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}"),
     "Anthropic key": re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}"),
     "AWS key": re.compile(r"AKIA[0-9A-Z]{16}(?![0-9A-Z])"),
@@ -54,21 +55,35 @@ class Finding:
         return f"{self.label}: {self.kind} in {self.place}"
 
 
-def kinds_in(text: str) -> list[str]:
-    """The kinds of private data found in one piece of text, each kind once, in a fixed order."""
+def kinds_in(text: str, binary: bool = False) -> list[str]:
+    """The kinds of private data found in one piece of text, each kind once, in a fixed order.
+    In binary content, email addresses are not looked for: random bytes often look like one."""
     found: list[str] = []
-    if any(not ALLOWED_EMAIL.match(m) for m in EMAIL.findall(text)):
+    if not binary and any(not ALLOWED_EMAIL.match(m) for m in EMAIL.findall(text)):
         found.append("email address")
+    without_web_addresses = WEB_ADDRESS.sub(" ", text)
+    if any(pattern.search(without_web_addresses) for pattern in USER_PATHS):
+        found.append("local user path")
     found.extend(kind for kind, pattern in PATTERNS.items() if pattern.search(text))
     return found
 
 
+UTF16_MARKS = (b"\xff\xfe", b"\xfe\xff")
+
+
+def is_binary(data: bytes) -> bool:
+    """A file version holding a NUL byte, unless it starts with a UTF-16 (or UTF-32) byte order mark."""
+    return b"\x00" in data and not data.startswith(UTF16_MARKS)
+
+
 def decode(data: bytes) -> str:
-    """Text from any file version: UTF-16 when it starts with a byte order mark, else UTF-8;
-    NUL bytes are dropped, so UTF-16 text without a mark and text inside binary files are read too."""
-    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
-        return data.decode("utf-16", errors="replace")
-    return data.decode("utf-8", errors="replace").replace("\x00", "")
+    """All the text in a file version: read as UTF-8 with NUL bytes dropped (which also reads the
+    plain-letter text of UTF-16 and UTF-32 files and of binary files), and, after a UTF-16 byte
+    order mark, also read as UTF-16."""
+    as_utf8 = data.decode("utf-8", errors="replace").replace("\x00", "")
+    if data.startswith(UTF16_MARKS):
+        return data.decode("utf-16", errors="replace") + "\n" + as_utf8
+    return as_utf8
 
 
 def run(args: Sequence[str], stdin: bytes | None = None) -> bytes:
@@ -99,14 +114,21 @@ def scan_names(label: str, paths: list[str]) -> list[Finding]:
 
 def scan_content(label: str, path: str, content: bytes) -> list[Finding]:
     shown = "a file whose name is withheld" if kinds_in(path) else f"file {path}"
-    return [Finding(label, shown, kind) for kind in kinds_in(decode(content))]
+    return [Finding(label, shown, kind) for kind in kinds_in(decode(content), binary=is_binary(content))]
+
+
+def text_of(output: bytes) -> str:
+    """git's output as text; a file name that is not UTF-8 is read with replacement characters."""
+    return output.decode("utf-8", errors="replace")
 
 
 def scan_history(revision: str) -> tuple[list[Finding], int]:
     if run(["rev-parse", "--is-shallow-repository"]).strip() == b"true":
         raise RuntimeError("this is a shallow clone, so part of the history is missing: fetch the full history")
     names: dict[str, str] = {}
-    for line in run(["rev-list", "--objects", revision]).decode("utf-8").splitlines():
+    for line in text_of(run(["rev-list", "--objects", revision])).split("\n"):
+        if not line:
+            continue
         oid, _, name = line.partition(" ")
         names.setdefault(oid, name)
     findings: list[Finding] = []
@@ -118,18 +140,23 @@ def scan_history(revision: str) -> tuple[list[Finding], int]:
         elif kind == "blob":
             findings += scan_content(oid[:7], names[oid], content)
     every_path = run(["log", "--format=", "--name-only", "-z", "--no-renames", "--diff-merges=first-parent", revision])
-    paths = {p.strip("\n") for p in every_path.decode("utf-8").split("\0")}
+    paths = {p.strip("\n") for p in text_of(every_path).split("\0")}
     findings += scan_names("names", sorted(p for p in paths if p))
     return findings, commits
 
 
+def staged_names(*options: str) -> list[str]:
+    listed = run(["diff", "--cached", "--name-only", "-z", *options])
+    return [name for name in text_of(listed).split("\0") if name]
+
+
 def scan_staged() -> tuple[list[Finding], int]:
-    listed = run(["diff", "--cached", "--name-only", "-z", "--diff-filter=d"])
-    files = [name for name in listed.decode("utf-8").split("\0") if name]
-    findings = scan_names("staged", files)
-    for name in files:
+    """Every staged change counts (a deletion too); the content of each added or changed file is read."""
+    changed = staged_names()
+    findings = scan_names("staged", changed)
+    for name in staged_names("--diff-filter=d"):
         findings += scan_content("staged", name, run(["cat-file", "blob", f":{name}"]))
-    return findings, len(files)
+    return findings, len(changed)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -137,7 +164,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args == ["--staged"]:
             findings, count = scan_staged()
-            scanned, nothing = f"{count} staged file(s)", "nothing is staged"
+            scanned, nothing = f"{count} staged change(s)", "nothing is staged"
         else:
             findings, count = scan_history(args[0] if args else "HEAD")
             scanned, nothing = f"{count} commits", "no commit to scan"
