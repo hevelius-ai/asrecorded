@@ -33,6 +33,9 @@ class Change:
     change: str  # "#11" for a pull request, the first 7 characters of the hash for a commit
     how: str
     when: datetime
+    # For a direct push only (S2): the account that pushed it, from the activity history, and the commit itself
+    actor: dict[str, Any] | None = field(default=None, compare=False)
+    commit: dict[str, Any] | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -229,7 +232,7 @@ def _list(repository: str, folder: Path, start: datetime, end: datetime) -> Repo
             sha = c["sha"]
             if sha not in excluded and sha[:7] not in listed:
                 listed.add(sha[:7])
-                result.changes.append(Change(repository, sha[:7], DIRECT, parse(entry["timestamp"])))
+                result.changes.append(Change(repository, sha[:7], DIRECT, parse(entry["timestamp"]), entry["actor"], c))
     result.changes.sort(key=lambda c: (c.when, c.change))
 
     # Cross-check: the first-parent line from the branch's last commit. After a rewrite stamped at or after the
