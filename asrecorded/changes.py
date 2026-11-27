@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from asrecorded.collect import ZERO, push_file
-from asrecorded.errors import Stop
+from asrecorded.errors import Stop, reading_saved
 from asrecorded.times import clock, count, day, parse
 
 PULL, DIRECT = "pull request", "pushed directly"
@@ -60,22 +60,8 @@ def list_changes(repository: str, folder: Path, start: datetime, end: datetime) 
             raise Stop(
                 f"The data folder has no saved {name} for {repository}. Run collect first. No record was written."
             )
-    try:
+    with reading_saved(repository, folder):
         return _list(repository, folder, start, end)
-    except FileNotFoundError as missing:
-        name = Path(missing.filename).relative_to(folder).as_posix()
-        raise Stop(
-            f"The saved data for {repository} is missing {name}. Run collect again. No record was written."
-        ) from None
-    except OSError as error:  # a locked file, or a folder where a file should be
-        raise Stop(
-            f"Cannot read the saved data for {repository}: {error.strerror or error}. Close any program that has "
-            "it open, then run write again. No record was written."
-        ) from None
-    except (KeyError, IndexError, TypeError, ValueError, AttributeError, RecursionError):
-        raise Stop(
-            f"The saved data for {repository} could not be read. Run collect again. No record was written."
-        ) from None
 
 
 def summary_lines(result: RepositoryList) -> list[str]:

@@ -16,7 +16,9 @@ from asrecorded.settings import load
 from asrecorded.times import parse
 from asrecorded.who import Who
 
-HEADER = "repository,change,how,when,builder,let_in_by,approvals,ai_shown,ai_trace,pattern,declared_agent_operated\n"
+HEADER = (
+    "repository,change,how,when,builder,let_in_by,approvals,ai_shown,ai_trace,pattern,declared_agent_operated,checks\n"
+)
 ONE = Who("dana", "dana", "", "not shown", "", "One account", "")
 
 
@@ -44,17 +46,24 @@ def test_rows_are_sorted_by_repository_order_then_time_then_id(tmp_path: Path) -
         ("acme/shop", "b000000"): pushed,
         ("acme/joined", "#2"): Who("bot", "bot", "", "yes", "declared agent-operated account", "One account", "yes"),
     }
-    path = write_changes(tmp_path / "record", [shop, joined], details)
+    direct = "checks not read for a direct push"
+    checks = {
+        ("acme/shop", "#11"): "AsBuild: success; ci: failure",
+        ("acme/shop", "a000000"): direct,
+        ("acme/shop", "b000000"): direct,
+        ("acme/joined", "#2"): "no checks ran on the merged version",
+    }
+    path = write_changes(tmp_path / "record", [shop, joined], details, checks)
     assert path == tmp_path / "record" / "changes.csv"
     assert path.read_bytes() == HEADER.encode() + (
         b"acme/shop,#11,pull request,2026-11-02T10:00:00Z,dana,dana,lee (on the merged version),not shown,,"
-        b"Two people,\n"
+        b"Two people,,AsBuild: success; ci: failure\n"
         b"acme/shop,a000000,pushed directly,2026-11-09T10:00:00Z,no pull request: not shown,pushed by lee,,"
-        b"not shown,,No pull request,\n"
+        b"not shown,,No pull request,,checks not read for a direct push\n"
         b"acme/shop,b000000,pushed directly,2026-11-09T10:00:00Z,no pull request: not shown,pushed by lee,,"
-        b"not shown,,No pull request,\n"
+        b"not shown,,No pull request,,checks not read for a direct push\n"
         b"acme/joined,#2,pull request,2026-11-08T10:00:00Z,bot,bot,,yes,declared agent-operated account,"
-        b"One account,yes\n"
+        b"One account,yes,no checks ran on the merged version\n"
     )
     assert sorted(p.name for p in path.parent.iterdir()) == ["changes.csv"]
 
@@ -123,7 +132,7 @@ def test_a_write_that_fails_keeps_the_earlier_changes_file_whole(
     monkeypatch.setattr("asrecorded.output.os.replace", refuse)
     shop = RepositoryList("acme/shop", [Change("acme/shop", "#11", "pull request", parse("2026-11-02T10:00:00Z"))])
     with pytest.raises(Stop) as stop:
-        write_changes(tmp_path / "record", [shop], {("acme/shop", "#11"): ONE})
+        write_changes(tmp_path / "record", [shop], {("acme/shop", "#11"): ONE}, {("acme/shop", "#11"): ""})
     assert stop.value.message == (
         f"Cannot write {earlier}: Access is denied. Close any program that has it open, then run write again. "
         "No record was written."
@@ -137,7 +146,7 @@ def test_an_output_that_names_a_file_gives_one_plain_sentence(tmp_path: Path) ->
     taken.write_text("a file, not a folder", encoding="utf-8")
     shop = RepositoryList("acme/shop", [Change("acme/shop", "#11", "pull request", parse("2026-11-02T10:00:00Z"))])
     with pytest.raises(Stop) as stop:
-        write_changes(taken, [shop], {("acme/shop", "#11"): ONE})
+        write_changes(taken, [shop], {("acme/shop", "#11"): ONE}, {("acme/shop", "#11"): ""})
     assert stop.value.message.startswith(f"Cannot write {taken / 'changes.csv'}: ")
     assert stop.value.message.endswith("No record was written.")
     assert taken.read_text(encoding="utf-8") == "a file, not a folder"
@@ -200,6 +209,8 @@ def test_logins_come_only_from_authenticated_actions_and_the_wording_rules_hold(
     approval = {"id": 9, "user": lee, "state": "APPROVED", "commit_id": head, "submitted_at": "2026-11-05T09:00:00Z"}
     save(folder / "pr" / "5" / "reviews.json", [approval])
     save(folder / "pr" / "5" / "timeline.json", [{"event": "merged", "actor": dana, "created_at": merged}])
+    save(folder / "pr" / "5" / "check_runs.json", [])
+    save(folder / "pr" / "5" / "statuses.json", [])
     lines = write(settings_in(tmp_path))  # type: ignore[arg-type]
     path = tmp_path / "record" / "changes.csv"
     with path.open(encoding="utf-8", newline="") as f:

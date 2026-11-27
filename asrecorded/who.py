@@ -14,7 +14,7 @@ from typing import Any, cast
 
 from asrecorded.agents import account_agent, commit_markers
 from asrecorded.changes import DIRECT, Change, RepositoryList
-from asrecorded.errors import Stop
+from asrecorded.errors import reading_saved
 from asrecorded.times import parse
 
 AUTO_ON = ("auto_merge_enabled", "auto_squash_enabled", "auto_rebase_enabled")
@@ -34,22 +34,8 @@ class Who:
 
 def describe(result: RepositoryList, folder: Path, declared: frozenset[str]) -> tuple[dict[str, Who], list[str]]:
     """Each change's `Who`, by its id, and the "not covered" lines (a merge queue, by the owner's cut)."""
-    try:
+    with reading_saved(result.repository, folder):
         return _describe(result, folder, frozenset(login.lower() for login in declared))  # logins ignore case
-    except FileNotFoundError as missing:
-        name = Path(missing.filename).relative_to(folder).as_posix()
-        raise Stop(
-            f"The saved data for {result.repository} is missing {name}. Run collect again. No record was written."
-        ) from None
-    except OSError as error:
-        raise Stop(
-            f"Cannot read the saved data for {result.repository}: {error.strerror or error}. Close any program "
-            "that has it open, then run write again. No record was written."
-        ) from None
-    except (KeyError, IndexError, TypeError, ValueError, AttributeError, RecursionError):
-        raise Stop(
-            f"The saved data for {result.repository} could not be read. Run collect again. No record was written."
-        ) from None
 
 
 def pattern_line(repository: str, details: dict[str, Who]) -> str:
