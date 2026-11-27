@@ -9,6 +9,16 @@
         "test_S1_C4_rewritten_history_is_listed_on_its_own",
         "test_S1_C5_a_project_the_sign_in_cannot_read_stops_collecting"
       ]
+    },
+    "tests/acceptance/S2/test_S2_who_built_and_let_in.py": {
+      "sha256": "45f55bdb73191a20f172cbe931e6fa2c9668a7165474e1a40071c4ba56d98420",
+      "tests": [
+        "test_S2_C1_each_change_in_the_example_set_shows_its_pattern",
+        "test_S2_C2_update_branch_does_not_make_the_merger_a_builder",
+        "test_S2_C3_a_login_from_a_commit_author_field_is_never_printed",
+        "test_S2_C4_the_row_says_whether_ai_is_shown_and_which_kind",
+        "test_S2_C5_a_declared_account_merging_its_own_change_is_counted_under_both"
+      ]
     }
   }
 }
