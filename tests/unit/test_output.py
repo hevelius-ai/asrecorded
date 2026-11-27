@@ -124,3 +124,20 @@ def test_an_output_that_names_a_file_gives_one_plain_sentence(tmp_path: Path) ->
     assert stop.value.message.startswith(f"Cannot write {taken / 'changes.csv'}: ")
     assert stop.value.message.endswith("No record was written.")
     assert taken.read_text(encoding="utf-8") == "a file, not a folder"
+
+
+def test_write_with_an_output_that_names_a_file_gives_one_plain_sentence(tmp_path: Path) -> None:
+    folder = tmp_path / "data" / "acme__shop"
+    save(folder / "repo.json", {"default_branch": "main", "created_at": "2026-10-01T00:00:00Z"})
+    save(folder / "pulls.json", [])
+    save(
+        folder / "activity.json",
+        [{"activity_type": "branch_creation", "before": "0", "after": "c", "timestamp": "2026-10-01T00:00:00Z"}],
+    )
+    save(folder / "main_commits.json", [])
+    taken = tmp_path / "record"
+    taken.write_text("a file, not a folder", encoding="utf-8")
+    with pytest.raises(Stop) as stop:  # on Linux, removing record/record.md raises NotADirectoryError
+        write(settings_in(tmp_path))  # type: ignore[arg-type]
+    assert stop.value.message.startswith(f"Cannot write {taken / 'changes.csv'}: ")
+    assert taken.read_text(encoding="utf-8") == "a file, not a folder"

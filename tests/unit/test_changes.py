@@ -249,6 +249,36 @@ def test_saved_data_of_an_unexpected_shape_is_refused(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize("loop", [[commit(1, [1])], [commit(3, [2, 1]), commit(2, [1]), commit(1, [3])]])
+def test_saved_commits_that_loop_back_on_themselves_are_refused(tmp_path: Path, loop: list[dict[str, Any]]) -> None:
+    folder = repository(tmp_path, pulls=[], activity=[entry("branch_creation", ZERO, h(1), OUTSIDE)], main=loop)
+    with pytest.raises(Stop) as stop:
+        list_changes("acme/shop", folder, START, END)
+    assert (
+        stop.value.message
+        == "The saved data for acme/shop could not be read. Run collect again. No record was written."
+    )
+
+
+def test_a_parent_that_is_also_a_grandparent_is_walked_once(tmp_path: Path) -> None:
+    folder = repository(
+        tmp_path,
+        pulls=[],
+        activity=[
+            entry("push", h(1), h(3), "2026-11-12T10:00:00Z"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[commit(3, [1, 2]), commit(2, [1]), commit(1, [], OUTSIDE)],
+        pushes={3: [commit(2, [1]), commit(3, [1, 2])]},
+    )
+    result = list_changes("acme/shop", folder, START, END)
+    assert shown(result) == [
+        (h(2)[:7], "pushed directly", "2026-11-12T10:00:00Z"),
+        (h(3)[:7], "pushed directly", "2026-11-12T10:00:00Z"),
+    ]
+    assert result.not_covered == []
+
+
 def test_one_of_each_is_counted_in_the_singular() -> None:
     when = datetime.fromisoformat("2026-11-20T09:00:00Z")
     result = RepositoryList(
@@ -309,6 +339,90 @@ def test_a_commit_pushed_after_the_period_is_not_called_not_covered(tmp_path: Pa
     result = list_changes("acme/shop", folder, START, END)
     assert shown(result) == [(h(2)[:7], "pushed directly", "2026-11-10T10:00:00Z")]
     assert result.not_covered == []
+
+
+def test_a_push_after_the_period_that_brought_two_commits_explains_both(tmp_path: Path) -> None:
+    folder = repository(
+        tmp_path,
+        pulls=[],
+        activity=[
+            entry("push", h(2), h(4), "2026-12-01T05:00:00Z"),
+            entry("push", h(1), h(2), "2026-11-10T10:00:00Z"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[
+            commit(4, [3], "2026-11-30T23:55:00Z"),
+            commit(3, [2], "2026-11-30T23:50:00Z"),
+            commit(2, [1], "2026-11-10T10:00:00Z"),
+            commit(1, [], OUTSIDE),
+        ],
+        pushes={2: [commit(2, [1])]},
+    )
+    result = list_changes("acme/shop", folder, START, END)
+    assert shown(result) == [(h(2)[:7], "pushed directly", "2026-11-10T10:00:00Z")]
+    assert result.not_covered == []
+
+
+def test_a_git_pull_merge_pushed_after_the_period_explains_its_local_commit(tmp_path: Path) -> None:
+    # `git pull` merges the branch into the local commit: the local commit is the merge's first parent, the pushed
+    # branch's `before` its second, so `before` is not on the merge's first-parent line.
+    folder = repository(
+        tmp_path,
+        pulls=[],
+        activity=[
+            entry("push", h(2), h(4), "2026-12-01T00:05:00Z"),
+            entry("push", h(1), h(2), "2026-11-10T10:00:00Z"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[
+            commit(4, [3, 2], "2026-12-01T00:04:00Z"),
+            commit(3, [1], "2026-11-30T23:50:00Z"),
+            commit(2, [1], "2026-11-10T10:00:00Z"),
+            commit(1, [], OUTSIDE),
+        ],
+        pushes={2: [commit(2, [1])]},
+    )
+    result = list_changes("acme/shop", folder, START, END)
+    assert shown(result) == [(h(2)[:7], "pushed directly", "2026-11-10T10:00:00Z")]
+    assert result.not_covered == []
+
+
+def test_a_branch_first_pushed_after_the_period_explains_what_it_brought(tmp_path: Path) -> None:
+    folder = repository(
+        tmp_path,
+        pulls=[],
+        activity=[entry("branch_creation", ZERO, h(3), "2026-12-01T00:05:00Z")],
+        main=[
+            commit(3, [2, 1], "2026-11-30T23:55:00Z"),
+            commit(2, [], "2026-11-30T23:50:00Z"),
+            commit(1, [9], "2026-11-30T23:40:00Z"),  # its parent was not saved: the walk stops there
+        ],
+        created="2026-11-30T23:00:00Z",
+    )
+    assert list_changes("acme/shop", folder, START, END).not_covered == []
+
+
+def test_a_merge_pushed_after_the_period_explains_only_what_its_before_did_not_hold(tmp_path: Path) -> None:
+    # The late push brought 4, 3 and 6. Commit 2 was already on `main` at its `before`, and no entry brought it in.
+    folder = repository(
+        tmp_path,
+        pulls=[],
+        activity=[
+            entry("push", h(2), h(4), "2026-12-01T00:05:00Z"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[
+            commit(4, [2, 3], "2026-12-01T00:04:00Z"),
+            commit(3, [6], "2026-11-30T23:50:00Z"),
+            commit(6, [1], "2026-11-29T10:00:00Z"),
+            commit(2, [1], "2026-11-10T10:00:00Z"),
+            commit(1, [], OUTSIDE),
+        ],
+    )
+    assert list_changes("acme/shop", folder, START, END).not_covered == [
+        f"acme/shop: not covered: commit {h(2)[:7]} on the main line, dated 2026-11-10 at 10:00 UTC, "
+        "is not explained by the activity history"
+    ]
 
 
 def test_a_push_undone_by_a_force_push_back_counts_what_each_brought(tmp_path: Path) -> None:
@@ -432,6 +546,42 @@ def test_a_rewrite_after_the_period_end_is_named_in_place_of_the_cross_check(tmp
     assert shown(result) == [("#11", "pull request", "2026-11-02T10:00:00Z")]
     assert result.rewrites == []
     assert result.not_covered == [
+        "acme/shop: not covered: history was rewritten after the period's end, on 2026-12-02 at 09:00 UTC, "
+        "so the main line was not cross-checked"
+    ]
+
+
+def test_a_rewrite_stamped_at_the_period_end_is_named(tmp_path: Path) -> None:
+    folder = repository(
+        tmp_path,
+        pulls=[],
+        activity=[
+            entry("force_push", h(2), h(3), "2026-12-01T00:00:00Z"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[commit(3, [1], "2026-11-15T10:00:00Z"), commit(1, [], OUTSIDE)],
+    )
+    result = list_changes("acme/shop", folder, START, END)
+    assert result.rewrites == []
+    assert result.not_covered == [
+        "acme/shop: not covered: history was rewritten after the period's end, on 2026-12-01 at 00:00 UTC, "
+        "so the main line was not cross-checked"
+    ]
+
+
+def test_the_first_of_several_rewrites_after_the_period_end_is_named(tmp_path: Path) -> None:
+    folder = repository(
+        tmp_path,
+        pulls=[],
+        activity=[
+            entry("force_push", h(4), h(5), "2026-12-03T09:00:00Z"),
+            entry("force_push", h(2), h(4), "2026-12-04T09:00:00Z"),
+            entry("force_push", h(1), h(2), "2026-12-02T09:00:00Z"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[commit(5, [1], "2026-11-15T10:00:00Z"), commit(1, [], OUTSIDE)],
+    )
+    assert list_changes("acme/shop", folder, START, END).not_covered == [
         "acme/shop: not covered: history was rewritten after the period's end, on 2026-12-02 at 09:00 UTC, "
         "so the main line was not cross-checked"
     ]

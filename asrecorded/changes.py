@@ -9,13 +9,14 @@ is a `merge_commit_sha` (a merge bot, or a person's own merge), the pushed commi
 
 from __future__ import annotations
 
+import heapq
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from asrecorded.collect import push_file
+from asrecorded.collect import ZERO, push_file
 from asrecorded.errors import Stop
 from asrecorded.times import clock, count, day, parse
 
@@ -104,6 +105,67 @@ def _first_parent_line(tip: str, parents: dict[str, list[str]], stop: str | None
     return line, current == stop
 
 
+def _generations(parents: dict[str, list[str]]) -> dict[str, int]:
+    """Each saved commit's height: one more than its highest saved parent, so a commit is always higher than every
+    commit it holds. Saved data that loops back on itself is refused."""
+    height: dict[str, int] = {}
+    for root in parents:
+        stack = [(root, False)]
+        path: set[str] = set()  # the commits whose parents are being walked: a parent among them is a loop
+        while stack:
+            sha, walked = stack.pop()
+            known = [p for p in parents[sha] if p in parents]
+            if walked:
+                height[sha] = 1 + max((height[p] for p in known), default=0)
+                path.discard(sha)
+            elif sha not in height:
+                path.add(sha)
+                stack.append((sha, True))
+                for p in known:
+                    if p in path:
+                        raise ValueError("the saved commits loop back on themselves")
+                    if p not in height:
+                        stack.append((p, False))
+    return height
+
+
+def _brought_by(entry: dict[str, Any], parents: dict[str, list[str]], height: dict[str, int]) -> set[str]:
+    """The saved commits an entry brought in: those `after` holds and `before` does not, through every parent (git's
+    `before..after`). When `before` is not among the saved commits (its history was rewritten away), only `after`."""
+    after, before = entry["after"], entry["before"]
+    if after not in parents or (before != ZERO and before not in parents):
+        return {after}
+    paint: dict[str, int] = {}  # 1: held by `after`; 2: held by `before`
+    queue: list[tuple[int, str]] = []
+    waiting = 0  # commits in the queue held by `after` alone
+
+    def mark(sha: str, side: int) -> None:
+        nonlocal waiting
+        was = paint.get(sha, 0)
+        now = was | side
+        if now == was:
+            return
+        paint[sha] = now
+        if not was:
+            heapq.heappush(queue, (-height[sha], sha))
+        waiting += (now == 1) - (was == 1)
+
+    mark(after, 1)
+    if before != ZERO:
+        mark(before, 2)
+    brought: set[str] = set()
+    while waiting:  # highest first: a commit is taken only once every commit holding it was
+        _, sha = heapq.heappop(queue)
+        side = paint[sha]
+        if side == 1:
+            waiting -= 1
+            brought.add(sha)
+        for parent in parents[sha]:
+            if parent in parents:
+                mark(parent, side)
+    return brought
+
+
 def _list(repository: str, folder: Path, start: datetime, end: datetime) -> RepositoryList:
     info = _read(folder / "repo.json")
     pulls = _read(folder / "pulls.json")
@@ -119,6 +181,7 @@ def _list(repository: str, folder: Path, start: datetime, end: datetime) -> Repo
     excluded = set(merge_shas)
     brought: set[str] = set()  # every commit an activity entry explains, for the cross-check
     main_parents = _parents(main)
+    height = _generations(main_parents)
 
     numbers: set[int] = set()  # a pull request saved twice (paging while another one closes) is listed once
     for pull in merged:
@@ -141,10 +204,9 @@ def _list(repository: str, folder: Path, start: datetime, end: datetime) -> Repo
     pushes: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
     for entry in sorted(activity, key=lambda e: parse(e["timestamp"])):
         kind = entry["activity_type"]
-        # Every entry, at any time, brought in its own stretch of the saved first-parent line, from `after` back to
-        # `before` (or `after` alone when `before` is not on it); for a merge, those commits are the pull request's.
-        line, reached = _first_parent_line(entry["after"], main_parents, entry["before"])
-        stretch = set(line) if reached else {entry["after"]}
+        # Every entry, at any time, brought in the saved commits its `after` holds and its `before` does not; for a
+        # merge, those commits are the pull request's.
+        stretch = _brought_by(entry, main_parents, height)
         brought |= stretch
         if kind in MERGES:
             excluded |= stretch
