@@ -15,7 +15,15 @@ from asrecorded.who import Who, describe, pattern_line
 
 MERGED = "2026-11-10T10:00:00Z"
 HEAD, EARLIER = "h" * 40, "e" * 40
-IDS = {"dana": 1001, "lee": 1002, "builder-bot": 1003, "review-bot[bot]": 1004, "deps[bot]": 1006, "merger[bot]": 1007}
+IDS = {
+    "dana": 1001,
+    "lee": 1002,
+    "builder-bot": 1003,
+    "review-bot[bot]": 1004,
+    "deps[bot]": 1006,
+    "merger[bot]": 1007,
+    "github-merge-queue[bot]": 118344674,
+}
 DECLARED = frozenset({"builder-bot"})
 CLAUDE = "work\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n"
 
@@ -232,3 +240,99 @@ def test_saved_data_of_the_wrong_shape_stops_with_a_plain_sentence(tmp_path: Pat
     assert stop.value.message == (
         "The saved data for acme/shop could not be read. Run collect again. No record was written."
     )
+
+
+QUEUE_BOT = "github-merge-queue[bot]"
+
+
+def test_github_removing_the_change_from_the_queue_as_it_merges_it_is_still_a_merge_queue(tmp_path: Path) -> None:
+    """As microsoft/vscode #350667 (27 Nov 2026): added by a person, removed by GitHub's queue bot, then merged."""
+    timeline = [event("added_to_merge_queue", "dana"), event("removed_from_merge_queue", QUEUE_BOT), merged("dana")]
+    change = pull_request(tmp_path, "dana", "dana", timeline=timeline)
+    details, not_covered = describe(RepositoryList("acme/shop", [change]), tmp_path, DECLARED)
+    assert (details["#11"].let_in_by, details["#11"].pattern) == (
+        "merge queue: added by dana",
+        "Automatic, no approval",
+    )
+    assert len(not_covered) == 1
+
+
+def test_a_draft_review_with_no_time_is_not_counted_and_stops_nothing(tmp_path: Path) -> None:
+    draft = {"id": 2, "user": account("lee"), "state": "PENDING", "commit_id": HEAD}  # no submitted_at
+    who = one(tmp_path, pull_request(tmp_path, "dana", "dana", [draft, review("review-bot[bot]")]))
+    assert (who.approvals, who.pattern) == ("review-bot[bot] (on the merged version)", "AI reviewer only")
+
+
+def test_a_saved_file_that_cannot_be_opened_stops_with_a_plain_sentence(tmp_path: Path) -> None:
+    change = pull_request(tmp_path, "dana", "dana")
+    reviews = tmp_path / "pr" / "11" / "reviews.json"
+    reviews.unlink()
+    reviews.mkdir()  # opening it fails as a locked file does on Windows
+    with pytest.raises(Stop) as stop:
+        describe(RepositoryList("acme/shop", [change]), tmp_path, DECLARED)
+    assert stop.value.message.startswith("Cannot read the saved data for acme/shop: ")
+    assert stop.value.message.endswith(
+        "Close any program that has it open, then run write again. No record was written."
+    )
+
+
+def test_saved_data_nested_too_deep_stops_with_a_plain_sentence(tmp_path: Path) -> None:
+    change = pull_request(tmp_path, "dana", "dana")
+    (tmp_path / "pr" / "11" / "timeline.json").write_text("[" * 100000 + "]" * 100000, encoding="utf-8")
+    with pytest.raises(Stop) as stop:
+        describe(RepositoryList("acme/shop", [change]), tmp_path, DECLARED)
+    assert stop.value.message == (
+        "The saved data for acme/shop could not be read. Run collect again. No record was written."
+    )
+
+
+def test_a_declared_account_is_matched_whatever_the_letter_case(tmp_path: Path) -> None:
+    who = one(tmp_path, pull_request(tmp_path, "builder-bot", "builder-bot"), frozenset({"Builder-Bot"}))
+    assert (who.ai_trace, who.pattern, who.declared_agent_operated) == (
+        "declared agent-operated account",
+        "One account",
+        "yes",
+    )
+
+
+def test_an_auto_merge_or_queue_entry_with_no_account_is_still_automatic(tmp_path: Path) -> None:
+    for kind, words in (("auto_merge_enabled", "auto-merge switched on"), ("added_to_merge_queue", "merge queue")):
+        timeline = [{"event": kind, "actor": None, "created_at": "2026-11-10T09:30:00Z"}, merged("dana")]
+        who = one(tmp_path, pull_request(tmp_path, "builder-bot", "dana", timeline=timeline))
+        assert (who.let_in_by, who.pattern) == (f"{words} (account not shown)", "Automatic, no approval")
+
+
+def test_auto_squash_and_auto_rebase_switch_auto_merge_on(tmp_path: Path) -> None:
+    for kind in ("auto_squash_enabled", "auto_rebase_enabled"):
+        timeline = [event(kind, "dana"), merged("dana")]
+        who = one(tmp_path, pull_request(tmp_path, "builder-bot", "dana", timeline=timeline))
+        assert (who.let_in_by, who.pattern) == ("auto-merge switched on by dana", "Automatic, no approval")
+
+
+def test_an_approval_by_another_declared_account_is_not_a_persons(tmp_path: Path) -> None:
+    who = one(tmp_path, pull_request(tmp_path, "dana", "dana", [review("builder-bot")]))
+    assert who.pattern == "AI reviewer only"
+
+
+def test_an_approval_given_in_the_same_second_as_the_merge_is_not_counted(tmp_path: Path) -> None:
+    who = one(tmp_path, pull_request(tmp_path, "dana", "dana", [review("lee", MERGED)]))
+    assert (who.approvals, who.pattern) == ("", "One account")
+
+
+def test_a_direct_push_by_a_declared_account_is_not_marked_declared_agent_operated(tmp_path: Path) -> None:
+    pushed = Change("acme/shop", "c1b2c3d", "pushed directly", parse(MERGED), account("builder-bot"), piece())
+    details, _ = describe(RepositoryList("acme/shop", [pushed]), tmp_path, DECLARED)
+    assert details["c1b2c3d"] == Who(
+        "no pull request: not shown",
+        "pushed by builder-bot",
+        "",
+        "yes",
+        "declared agent-operated account",
+        "No pull request",
+        "",
+    )
+
+
+def test_a_listed_coding_agent_that_is_also_declared_shows_one_account_kind(tmp_path: Path) -> None:
+    who = one(tmp_path, pull_request(tmp_path, "Copilot", "lee"), frozenset({"Copilot"}))
+    assert who.ai_trace == "coding agent account: GitHub Copilot"

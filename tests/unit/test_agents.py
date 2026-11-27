@@ -71,3 +71,7 @@ def test_each_tool_is_named_once_in_the_lists_order() -> None:
 def test_a_commit_with_no_author_name_or_address_is_read_as_no_marker() -> None:
     assert commit_markers([{"commit": {"message": "work", "author": None}}]) == []
     assert commit_markers([{"commit": {"message": "work", "author": {}}}]) == []
+
+
+def test_anthropics_address_alone_does_not_make_an_author_name_a_marker() -> None:
+    assert commit_markers([piece(name="dana", address=ANTHROPIC)]) == []

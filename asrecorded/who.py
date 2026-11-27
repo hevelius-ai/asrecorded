@@ -35,13 +35,18 @@ class Who:
 def describe(result: RepositoryList, folder: Path, declared: frozenset[str]) -> tuple[dict[str, Who], list[str]]:
     """Each change's `Who`, by its id, and the "not covered" lines (a merge queue, by the owner's cut)."""
     try:
-        return _describe(result, folder, declared)
+        return _describe(result, folder, frozenset(login.lower() for login in declared))  # logins ignore case
     except FileNotFoundError as missing:
         name = Path(missing.filename).relative_to(folder).as_posix()
         raise Stop(
             f"The saved data for {result.repository} is missing {name}. Run collect again. No record was written."
         ) from None
-    except (KeyError, IndexError, TypeError, ValueError, AttributeError):
+    except OSError as error:
+        raise Stop(
+            f"Cannot read the saved data for {result.repository}: {error.strerror or error}. Close any program "
+            "that has it open, then run write again. No record was written."
+        ) from None
+    except (KeyError, IndexError, TypeError, ValueError, AttributeError, RecursionError):
         raise Stop(
             f"The saved data for {result.repository} could not be read. Run collect again. No record was written."
         ) from None
@@ -80,7 +85,7 @@ def _ai(account: dict[str, Any], commits: list[dict[str, Any]], declared: frozen
     agent = account_agent(account)
     if agent:
         kinds.append(f"coding agent account: {agent}")
-    elif account["login"] in declared:
+    elif account["login"].lower() in declared:
         kinds.append("declared agent-operated account")
     kinds += [f"commit marker: {name}" for name in commit_markers(commits)]
     return ("yes", "; ".join(kinds)) if kinds else ("not shown", "")
@@ -94,27 +99,35 @@ def _pushed(change: Change, declared: frozenset[str]) -> Who:
 
 def _until_merged(timeline: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """Who switched auto-merge on, and who added it to a merge queue, as things stood at the `merged` entry (the
-    whole timeline when it holds none)."""
-    auto = queued = None
+    whole timeline when it holds none). None: off; an empty dict: on, by an account GitHub does not show.
+    GitHub's own queue bot writes `removed_from_merge_queue` as it merges the change (microsoft/vscode #350667,
+    27 Nov 2026), so only a person taking it out of the queue ends the queue."""
+    auto: dict[str, Any] | None = None
+    queued: dict[str, Any] | None = None
     for entry in timeline:
         kind = entry.get("event")
         if kind == "merged":
             break
         if kind in AUTO_ON:
-            auto = entry["actor"]
+            auto = entry["actor"] or {}
         elif kind == "auto_merge_disabled":
             auto = None
         elif kind == "added_to_merge_queue":
-            queued = entry["actor"]
-        elif kind == "removed_from_merge_queue":
+            queued = entry["actor"] or {}
+        elif kind == "removed_from_merge_queue" and (entry["actor"] or {}).get("type") == "User":
             queued = None
     return auto, queued
+
+
+def _by(words: str, account: dict[str, Any]) -> str:
+    return f"{words} by {account['login']}" if account else f"{words} (account not shown)"
 
 
 def _approvals(reviews: list[dict[str, Any]], merged_at: str, head: str) -> list[tuple[dict[str, Any], str]]:
     """Each approver once, by their last approval given before the merge, in time order (S0-6)."""
     last: dict[str, tuple[dict[str, Any], str]] = {}
-    for review in sorted(reviews, key=lambda r: parse(r["submitted_at"])):
+    given = [r for r in reviews if r.get("submitted_at")]  # a draft review has no time yet
+    for review in sorted(given, key=lambda r: parse(r["submitted_at"])):
         if review["state"] == "APPROVED" and review["user"] and parse(review["submitted_at"]) < parse(merged_at):
             version = "on the merged version" if review["commit_id"] == head else "on an earlier version"
             last.pop(review["user"]["login"], None)  # keep the order of each approver's last approval
@@ -133,10 +146,10 @@ def _pull_request(base: Path, declared: frozenset[str]) -> tuple[Who, bool]:
     shown, trace = _ai(opener, commits, declared)
 
     def person(account: dict[str, Any]) -> bool:
-        return bool(account["type"] == "User" and account["login"] not in declared)
+        return bool(account["type"] == "User" and account["login"].lower() not in declared)
 
     def agent(account: dict[str, Any]) -> bool:
-        return bool(account["login"] in declared or account["type"] == "Bot")
+        return bool(account["login"].lower() in declared or account["type"] == "Bot")
 
     other = merger["login"] != opener["login"]
     by_hand = auto is None and queued is None
@@ -149,11 +162,11 @@ def _pull_request(base: Path, declared: frozenset[str]) -> tuple[Who, bool]:
         pattern = "Automatic, no approval"
     else:
         pattern = ONE_ACCOUNT
-        mark = "yes" if opener["login"] in declared else ""
+        mark = "yes" if opener["login"].lower() in declared else ""
     if queued is not None:
-        let_in = f"merge queue: added by {queued['login']}"
+        let_in = f"merge queue: added by {queued['login']}" if queued else "merge queue (account not shown)"
     elif auto is not None:
-        let_in = f"auto-merge switched on by {auto['login']}"
+        let_in = _by("auto-merge switched on", auto)
     else:
         let_in = merger["login"]
     listed = "; ".join(f"{a['login']} ({version})" for a, version in approvals)
