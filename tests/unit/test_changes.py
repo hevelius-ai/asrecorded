@@ -108,6 +108,9 @@ def test_pull_requests_and_direct_pushes_of_the_period(tmp_path: Path) -> None:
     ]
     assert result.rewrites == []
     assert result.not_covered == []
+    pushed = result.changes[2]  # S2 reads who pushed it and the pushed commit itself
+    assert (pushed.actor, pushed.commit) == ({"login": "lee"}, commit(301, [103]))
+    assert (result.changes[0].actor, result.changes[0].commit) == (None, None)
     assert summary_lines(result) == ["acme/shop: 3 changes (2 pull requests, 1 commit pushed directly)"]
 
 

@@ -20,6 +20,11 @@ A log of using AsBuild v0.4.2 to build this repository: each verdict, each time 
 | 2026-11-26 | Story PR #5, AsBuild's note | WAITING FOR YOU, as the skill says for a story pull request. The owner merged it at 22:00 UTC | 0 |
 | 2026-11-26 | `/asbuild:verdict`, PR #6 (tooling T2) | WAITING FOR YOU: `PROTECTED_CHANGED` for `ci.yml` and `pyproject.toml`, `NO_STORY`. Expected | 0 |
 
+| 2026-11-26 to 27 | `/asbuild:verdict`, PR #7 (S1 build) | PROVEN at each of five heads: 1d71248 (149 other tests, 0 broken), cda334b (164), ae3848a (173), 61cd16c (183) and 235736e (186); each said "S1-C1 to C5 work". The verdict arrived within a few minutes of CI each time | 0 |
+| 2026-11-27 | `/asbuild:story` S2, PR #8 | `asbuild_story_check.py S2 --lock` passed (5 checks, 5 tests). **Got in the way (our slip):** the first lock was taken before lint, which then found one line over 120 characters; nothing was committed, so the two lock lines were removed, the file formatted and the lock taken again. Lint now runs before the lock | 0 |
+| 2026-11-27 | Changing locked tests before the story merge, PR #8 | The procedure worked as written this time: with the owner's permission (PR8-3A), the deny line was removed, a new headless session made the fixes, and `--lock` put the line back (5 checks, 5 tests). One of the fixes reworded an approved line, so the owner approved the new words first | 0 |
+| 2026-11-27 | Story PR #8, AsBuild's note | WAITING FOR YOU, as for every story pull request; GitHub showed it as a yellow pending check beside our two red gates (the locked tests, D-CI1). **Confusing for the owner:** "2 failing" on a pull request they are asked to merge; one line in the action block explained it. The owner merged it at 17:23 UTC | 0 |
+
 ## Summary (written at the release)
 
 - What worked:
