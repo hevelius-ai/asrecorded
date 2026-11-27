@@ -17,21 +17,37 @@ from typing import Any
 from asrecorded.changes import DIRECT, RepositoryList
 from asrecorded.errors import reading_saved
 from asrecorded.times import parse
+from asrecorded.wording import mask
 
 NONE_RAN = "no checks ran on the merged version"
 NOT_FINISHED = "not finished at the merge"
 DIRECT_PUSH = "checks not read for a direct push"
 
 
-def describe_checks(result: RepositoryList, folder: Path) -> dict[str, str]:
-    """Each change's `checks` cell, by its id."""
+Results = tuple[tuple[str, str], ...]  # (name as GitHub gives it, result), sorted by name; None for a direct push
+
+
+def describe_results(result: RepositoryList, folder: Path) -> dict[str, Results | None]:
+    """Each change's checks on the merged version, by its id: what the rule reads."""
     with reading_saved(result.repository, folder):
         return {
-            change.change: DIRECT_PUSH
-            if change.how == DIRECT
-            else _cell(folder / "pr" / change.change.removeprefix("#"))
+            change.change: None if change.how == DIRECT else _results(folder / "pr" / change.change.removeprefix("#"))
             for change in result.changes
         }
+
+
+def cell(results: Results | None) -> str:
+    """The `checks` cell; a name is printed with any banned word or address replaced (S4-W1 C)."""
+    if results is None:
+        return DIRECT_PUSH
+    if not results:
+        return NONE_RAN
+    return "; ".join(f"{mask(name)}: {state}" for name, state in results)
+
+
+def describe_checks(result: RepositoryList, folder: Path) -> dict[str, str]:
+    """Each change's `checks` cell, by its id."""
+    return {change: cell(results) for change, results in describe_results(result, folder).items()}
 
 
 def _read(path: Path) -> Any:
@@ -60,9 +76,7 @@ def _statuses(statuses: list[dict[str, Any]], merged: datetime) -> list[tuple[st
     return list(last.items())
 
 
-def _cell(base: Path) -> str:
+def _results(base: Path) -> Results:
     merged = parse(_read(base / "pull.json")["merged_at"])
     shown = _runs(_read(base / "check_runs.json"), merged) + _statuses(_read(base / "statuses.json"), merged)
-    if not shown:
-        return NONE_RAN
-    return "; ".join(f"{name}: {state}" for name, state in sorted(shown, key=lambda s: (s[0].casefold(), s[0])))
+    return tuple(sorted(shown, key=lambda s: (s[0].casefold(), s[0])))

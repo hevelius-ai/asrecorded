@@ -10,6 +10,7 @@ from typing import Any
 
 from asrecorded import times
 from asrecorded.errors import Stop
+from asrecorded.wording import found
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,11 @@ def load(path: Path) -> Settings:
             raise Stop(f'"{name}" in "repositories" is not written as owner/name.')
         if repositories.count(name) > 1:
             raise Stop(f'"{name}" is listed twice in "repositories".')
+        problems = found(name)  # a record prints the name as written (decision S4-W2)
+        if problems:
+            raise Stop(
+                f'"{name}" in "repositories" holds {problems[0]}, which a record never uses. No record was written.'
+            )
     start, end = _time(raw, "start"), _time(raw, "end")
     if start >= end:
         raise Stop('The settings\' "start" must be before "end".')
@@ -56,7 +62,7 @@ def load(path: Path) -> Settings:
         start=start,
         end=end,
         agent_accounts=_words(raw, "agent_accounts"),
-        disclosures=_words(raw, "disclosures"),
+        disclosures=_disclosures(raw),
         data=folder / _path(raw, "data", "data"),
         output=folder / _path(raw, "output", "record"),
         rule=folder / _path(raw, "rule", "") if "rule" in raw else None,
@@ -84,3 +90,21 @@ def _path(raw: dict[str, Any], key: str, default: str) -> str:
     if not isinstance(value, str) or not value:
         raise Stop(f'"{key}" in the settings must be a path in quotes.')
     return value
+
+
+def _disclosures(raw: dict[str, Any]) -> tuple[str, ...]:
+    """Disclosures are printed in the record as written (design section 1), so none may break the wording rules."""
+    texts = _words(raw, "disclosures")
+    for number, text in enumerate(texts, start=1):
+        problems = found(text)
+        if problems and problems[0] == "an email address":
+            raise Stop(
+                f"Disclosure {number} in the settings holds an email address, which a record never shows. "
+                "Change it, then run this again."
+            )
+        if problems:
+            raise Stop(
+                f"Disclosure {number} in the settings holds {problems[0]}, which a record never uses. "
+                "Change it, then run this again."
+            )
+    return texts

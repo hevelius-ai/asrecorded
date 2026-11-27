@@ -150,3 +150,13 @@ def test_pages_without_the_named_list_are_refused(monkeypatch: pytest.MonkeyPatc
     replies(monkeypatch, pages)
     with pytest.raises(github.Refused):
         github.get_compare("repos/acme/shop/compare/a...b")
+
+
+def test_a_path_that_would_read_as_a_flag_is_refused() -> None:
+    from asrecorded.errors import Stop
+
+    with pytest.raises(Stop) as stop:
+        github.pages("-XPOST")
+    assert stop.value.message == (
+        "Refused to ask GitHub for '-XPOST': a path never starts with '-', so it cannot pass as a flag to gh."
+    )

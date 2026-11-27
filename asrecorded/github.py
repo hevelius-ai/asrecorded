@@ -39,6 +39,10 @@ def program() -> list[str]:
 
 def pages(path: str) -> list[Any]:
     """Every page GitHub gives for `path`, as `--slurp` lists them."""
+    if path.startswith("-"):  # it would pass as a flag to gh, such as -XPOST (PR #14 review, H1)
+        raise Stop(
+            f"Refused to ask GitHub for {path!r}: a path never starts with '-', so it cannot pass as a flag to gh."
+        )
     command = [*program(), "api", "--method", "GET", "--paginate", "--slurp", path]
     try:
         done = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
