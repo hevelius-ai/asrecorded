@@ -1,7 +1,7 @@
 """Write (design §1, §3 step 7): the record from the data folder only. It never calls GitHub.
 
 `changes.csv` holds S1's columns (repository, change, how, when), then S2's (who built it, who let it in, approvals,
-AI shown and the pattern); later stories add columns at the end.
+AI shown and the pattern), then S3's (the checks on the merged version); later stories add columns at the end.
 Files are written to a temporary name and renamed when complete; a failed write first removes any `record.md` it
 would replace.
 """
@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 
 from asrecorded.changes import RepositoryList, list_changes, summary_lines
+from asrecorded.checks import describe_checks
 from asrecorded.errors import Stop
 from asrecorded.settings import Settings, folder_name
 from asrecorded.times import count, iso
@@ -31,6 +32,7 @@ COLUMNS = (
     "ai_trace",
     "pattern",
     "declared_agent_operated",
+    "checks",
 )
 
 
@@ -45,7 +47,12 @@ def write(settings: Settings) -> list[str]:
         details = {
             (r.repository, c): who for r, (found, _) in zip(lists, described, strict=True) for c, who in found.items()
         }
-        path = write_changes(settings.output, lists, details)
+        checks = {
+            (r.repository, c): cell
+            for r in lists
+            for c, cell in describe_checks(r, settings.data / folder_name(r.repository)).items()
+        }
+        path = write_changes(settings.output, lists, details, checks)
     except Stop:
         with contextlib.suppress(FileNotFoundError, NotADirectoryError):  # no record.md, or no output folder
             (settings.output / "record.md").unlink()
@@ -58,7 +65,12 @@ def write(settings: Settings) -> list[str]:
     return lines
 
 
-def write_changes(output: Path, lists: list[RepositoryList], details: dict[tuple[str, str], Who]) -> Path:
+def write_changes(
+    output: Path,
+    lists: list[RepositoryList],
+    details: dict[tuple[str, str], Who],
+    checks: dict[tuple[str, str], str],
+) -> Path:
     """One row per change, sorted by repository (in settings order), then time, then id."""
     final = output / "changes.csv"
     temporary = output / "changes.csv.tmp"
@@ -83,6 +95,7 @@ def write_changes(output: Path, lists: list[RepositoryList], details: dict[tuple
                             who.ai_trace,
                             who.pattern,
                             who.declared_agent_operated,
+                            checks[(change.repository, change.change)],
                         )
                     )
         os.replace(temporary, final)

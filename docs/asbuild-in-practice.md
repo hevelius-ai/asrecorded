@@ -25,6 +25,10 @@ A log of using AsBuild v0.4.2 to build this repository: each verdict, each time 
 | 2026-11-27 | Changing locked tests before the story merge, PR #8 | The procedure worked as written this time: with the owner's permission (PR8-3A), the deny line was removed, a new headless session made the fixes, and `--lock` put the line back (5 checks, 5 tests). One of the fixes reworded an approved line, so the owner approved the new words first | 0 |
 | 2026-11-27 | Story PR #8, AsBuild's note | WAITING FOR YOU, as for every story pull request; GitHub showed it as a yellow pending check beside our two red gates (the locked tests, D-CI1). **Confusing for the owner:** "2 failing" on a pull request they are asked to merge; one line in the action block explained it. The owner merged it at 17:23 UTC | 0 |
 
+| 2026-11-27 | `/asbuild:verdict`, PR #9 (S2 build) | PROVEN at each of three heads: 3027b92 (220 other tests, 0 broken), 5f9e388 (232) and d2b64f4 (233); each said "S2-C1 to C5 work". The verdict came about two minutes after the push each time | 0 |
+| 2026-11-27 | `/asbuild:verdict`, PR #10 (a fix no story covers) | WAITING FOR YOU, `NO_STORY` (branch `fix/read-errors`); 240 other tests, 0 broken. Expected: the owner's merge is the decision, as for PRs #1, #3, #4 and #6 | 0 |
+| 2026-11-27 | `/asbuild:story` S3, PR #11 | `asbuild_story_check.py S3 --lock` passed on the first run (4 checks, 4 tests); lint ran before the lock this time. The owner approved the four lines with no question asked: the agreed design had settled every open point. WAITING FOR YOU on the story pull request, as always | 0 |
+
 ## Summary (written at the release)
 
 - What worked:
