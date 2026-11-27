@@ -3,7 +3,8 @@
     "deny": [
       "Edit(/tests/acceptance/S1/**)",
       "Edit(/tests/acceptance/S2/**)",
-      "Edit(/tests/acceptance/S3/**)"
+      "Edit(/tests/acceptance/S3/**)",
+      "Edit(/tests/acceptance/S4/**)"
     ]
   }
 }
