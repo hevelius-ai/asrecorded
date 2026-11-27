@@ -3,6 +3,8 @@
 Read on a pull request's last commit, as collect saved them: every check run (`filter=all`) and every commit status.
 For each name, only what had started (a run) or been posted (a status) before the merge counts, and a result counts
 only when it was in before the merge. Results are written as GitHub gives them; no name is treated differently.
+GitHub's times step by one second, so two entries of one name can share a second (elastic/elasticsearch #167931,
+27 Nov 2026); GitHub's id, which grows as entries are made, then gives their order.
 """
 
 from __future__ import annotations
@@ -39,7 +41,7 @@ def _read(path: Path) -> Any:
 def _runs(runs: list[dict[str, Any]], merged: datetime) -> list[tuple[str, str]]:
     """For each name, the run that started last before the merge, and its result as things stood at the merge."""
     last: dict[str, dict[str, Any]] = {}
-    for run in sorted(runs, key=lambda r: parse(r["started_at"])):
+    for run in sorted(runs, key=lambda r: (parse(r["started_at"]), r["id"])):
         if parse(run["started_at"]) < merged:
             last[run["name"]] = run
     shown = []
@@ -52,7 +54,7 @@ def _runs(runs: list[dict[str, Any]], merged: datetime) -> list[tuple[str, str]]
 def _statuses(statuses: list[dict[str, Any]], merged: datetime) -> list[tuple[str, str]]:
     """For each context, the entry posted last before the merge; `pending` is a result not yet in."""
     last: dict[str, str] = {}
-    for entry in sorted(statuses, key=lambda s: parse(s["created_at"])):
+    for entry in sorted(statuses, key=lambda s: (parse(s["created_at"]), s["id"])):
         if parse(entry["created_at"]) < merged:
             last[entry["context"]] = NOT_FINISHED if entry["state"] == "pending" else entry["state"]
     return list(last.items())

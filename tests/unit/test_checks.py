@@ -128,3 +128,40 @@ def test_saved_checks_of_the_wrong_shape_stop_with_a_plain_sentence(tmp_path: Pa
     assert stop.value.message == (
         "The saved data for acme/shop could not be read. Run collect again. No record was written."
     )
+
+
+def test_entries_of_one_name_in_the_same_second_are_ordered_by_their_github_id(tmp_path: Path) -> None:
+    """GitHub's times step by one second and it lists the newest first: elastic/elasticsearch #167931's `CLA` has
+    `pending` and then `success` in one second (read 27 Nov 2026). The id gives the order they were posted in."""
+    statuses = [
+        status("CLA", "success", "2026-11-10T09:35:08Z", 7689),
+        status("CLA", "pending", "2026-11-10T09:35:08Z", 6919),
+    ]
+    assert cell(tmp_path, [], statuses) == "CLA: success"
+    rerun = run("ci", "success", "2026-11-10T09:00:00Z", "2026-11-10T09:05:00Z", 2)
+    first = run("ci", "failure", "2026-11-10T09:00:00Z", "2026-11-10T09:02:00Z", 1)
+    assert cell(tmp_path, [rerun, first]) == "ci: success"
+    assert cell(tmp_path, [first, rerun]) == "ci: success"
+
+
+def test_the_run_started_last_wins_even_when_an_earlier_one_ended_later(tmp_path: Path) -> None:
+    slow = run("ci", "failure", "2026-11-10T09:00:00Z", "2026-11-10T09:50:00Z", 1)
+    rerun = run("ci", "success", "2026-11-10T09:10:00Z", "2026-11-10T09:20:00Z", 2)
+    assert cell(tmp_path, [slow, rerun]) == "ci: success"
+    assert cell(tmp_path, [rerun, slow]) == "ci: success"
+
+
+def test_statuses_are_read_by_time_whatever_the_order_they_are_saved_in(tmp_path: Path) -> None:
+    older = status("deploy", "pending", "2026-11-10T09:00:00Z", 1)
+    newer = status("deploy", "failure", "2026-11-10T09:20:00Z", 2)
+    assert cell(tmp_path, [], [older, newer]) == "deploy: failure"
+    assert cell(tmp_path, [], [newer, older]) == "deploy: failure"
+
+
+def test_asbuild_is_sorted_by_its_name_like_any_other(tmp_path: Path) -> None:
+    runs = [
+        run("AsBuild", "success", "2026-11-10T09:00:00Z", "2026-11-10T09:01:00Z", 1),
+        run("Analyze", "success", "2026-11-10T09:00:00Z", "2026-11-10T09:01:00Z", 2),
+        run("aardvark", "failure", "2026-11-10T09:00:00Z", "2026-11-10T09:01:00Z", 3),
+    ]
+    assert cell(tmp_path, runs) == "aardvark: failure; Analyze: success; AsBuild: success"
