@@ -30,7 +30,7 @@
       ]
     },
     "tests/acceptance/S4/test_S4_the_record.py": {
-      "sha256": "e8a62006164748fa0f18bb7e90f4d6714b52657fb2b106a14195b191bb3a88c7",
+      "sha256": "36cc7677b66fa8d6a55c1e7869f297ebbd939663add302cd307e2ab0bce177f8",
       "tests": [
         "test_S4_C1_the_record_shows_the_totals_the_six_exceptions_and_every_change",
         "test_S4_C2_without_a_rule_there_is_no_exceptions_section_and_patterns_are_counted",

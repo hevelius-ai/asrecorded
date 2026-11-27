@@ -30,7 +30,6 @@ ACCOUNTS = {
     "builder-bot": (1003, "User"),
     "review-bot[bot]": (1004, "Bot"),
     "stranger": (1005, "User"),
-    "web-flow": (19864447, "User"),
 }
 CLAUDE_LINE = "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 API = "https://api.github.com"
@@ -84,10 +83,6 @@ def commit(oid: str, parents: list[str], when: str) -> dict[str, Any]:
 def hours_before(when: str, hours: int) -> str:
     moment = datetime.strptime(when, "%Y-%m-%dT%H:%M:%SZ") - timedelta(hours=hours)
     return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def dated(c: dict[str, Any], when: str) -> None:
-    c["commit"]["author"]["date"] = c["commit"]["committer"]["date"] = when
 
 
 def event(oid: int, kind: str, before: str, after: str, when: str, actor: str) -> dict[str, Any]:
@@ -346,14 +341,15 @@ def shop_with_checks() -> dict[str, Any]:
 
 def shop_for_the_wording_check() -> dict[str, Any]:
     """The example set, plus what would break the wording rules if printed as given: on #12's last commit, a check
-    run named with the word "passed" (as every recent astral-sh/uv pull request has) and a commit status whose name
-    holds an email address."""
+    run named with the word "passed" (as every recent astral-sh/uv pull request has), one named `checks_passed`
+    (the word joined on by an underscore) and a commit status whose name holds an email address."""
     replies = shop_with_checks()
     head = replies["repos/acme/shop/pulls/12"]["head"]["sha"]
     runs = replies[f"repos/acme/shop/commits/{head}/check-runs"]["check_runs"]
     runs.append(
         check_run(7400, "all required jobs passed", head, "success", "2026-11-03T09:00:00Z", "2026-11-03T09:05:00Z")
     )
+    runs.append(check_run(7401, "checks_passed", head, "success", "2026-11-03T09:00:00Z", "2026-11-03T09:05:00Z"))
     give_checks(replies, "acme/shop", head, runs)
     address = "ops" + "@" + "example.invalid"
     replies[f"repos/acme/shop/commits/{head}/statuses"] = [
@@ -422,9 +418,8 @@ def section(lines: list[str], heading: str) -> list[str]:
 
 
 EXCEPTIONS = "## Exceptions under the rule"
+CANNOT_SHOW_HEADING = "## What this record cannot show"
 CANNOT_SHOW = [
-    "## What this record cannot show",
-    "",
     "- AI use that leaves no trace in the history",
     "- whether an approver read or understood the change",
     "- whether the checks were good checks",
@@ -433,7 +428,10 @@ CANNOT_SHOW = [
     "- anything outside the listed repositories or outside GitHub",
     "- history that was rewritten",
 ]
-BANNED = re.compile(r"\b(approved|compliant|certified|secure|safe|audited|passed)\b|\bno AI\b", re.IGNORECASE)
+# A word ends at any character that is not a letter or a digit, the underscore included: `checks_passed` holds "passed".
+BANNED = re.compile(
+    r"(?<![^\W_])(approved|compliant|certified|secure|safe|audited|passed|no AI)(?![^\W_])", re.IGNORECASE
+)
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 
 
@@ -443,9 +441,16 @@ def test_S4_C1_the_record_shows_the_totals_the_six_exceptions_and_every_change(t
     assert "- Changes: 8 (7 through a pull request, 1 pushed directly)" in lines
     assert "- AI shown: 6" in lines
     assert "- Exceptions under the rule: 6" in lines
-    reasons = [line for line in section(lines, EXCEPTIONS) if line.startswith("- ")]
+    reasons = [line for line in section(lines, EXCEPTIONS) if line.startswith("- ")]  # any `### ` sub-heading aside
     assert '- #16: the required check "ci" did not end in success on the merged version (it shows: failure).' in reasons
-    assert [line.split(":")[0] for line in reasons] == ["- #13", "- #14", "- #15", "- #16", "- #18", "- a1b2c3d"]
+    assert reasons == [  # pull requests by number, then commits pushed directly by time
+        '- #13: the pattern "One account" is not allowed by the rule.',
+        '- #14: the pattern "AI reviewer only" is not allowed by the rule.',
+        '- #15: the pattern "Automatic, no approval" is not allowed by the rule.',
+        '- #16: the required check "ci" did not end in success on the merged version (it shows: failure).',
+        '- #18: the pattern "One account" is not allowed by the rule.',
+        '- a1b2c3d: the pattern "No pull request" is not allowed by the rule.',
+    ]
     rows = [line for line in section(lines, "## Every change") if line.startswith("| acme/shop |")]
     assert (
         "| acme/shop | [#11](https://github.com/acme/shop/pull/11) | 2026-11-02 10:00 | pull request | dana | dana "
@@ -461,18 +466,21 @@ def test_S4_C2_without_a_rule_there_is_no_exceptions_section_and_patterns_are_co
     assert "- One account: 2, of which 1 declared agent-operated" in lines
     assert "- Automatic, no approval: 1" in lines
     assert EXCEPTIONS not in lines
+    assert [line for line in lines if "Exceptions" in line] == []
     assert out.returncode == 0, out.stderr
 
 
 def test_S4_C3_two_runs_give_the_same_files_and_the_record_holds_the_checksums(tmp_path: Path) -> None:
     first = run_tool(tmp_path, shop_with_checks(), rule=True)
     lines = record(tmp_path, first)
+    assert first.returncode == 0, first.stderr
     names = ["record.md", "changes.csv", "record.json"]
     before = {
         name: (tmp_path / "record" / name).read_bytes() for name in names if (tmp_path / "record" / name).is_file()
     }
     assert sorted(before) == sorted(names), f"files written: {sorted(before)}"
     again = run_tool(tmp_path, shop_with_checks(), rule=True, command="write")
+    assert again.returncode == 0, again.stderr
     after = {name: (tmp_path / "record" / name).read_bytes() for name in names}
     assert after == before, again.stderr
     csv_sum = hashlib.sha256(before["changes.csv"]).hexdigest()
@@ -484,8 +492,9 @@ def test_S4_C3_two_runs_give_the_same_files_and_the_record_holds_the_checksums(t
 def test_S4_C4_no_banned_word_or_email_address_and_the_fixed_section_word_for_word(tmp_path: Path) -> None:
     out = run_tool(tmp_path, shop_for_the_wording_check(), rule=True)
     lines = record(tmp_path, out)
-    start = lines.index("## What this record cannot show") if "## What this record cannot show" in lines else 0
-    assert lines[start : start + len(CANNOT_SHOW)] == CANNOT_SHOW
+    assert "## What this record cannot show" in lines
+    # the whole section, up to the next `## ` heading or the end, blank lines aside: the seven items and nothing else
+    assert [line for line in section(lines, CANNOT_SHOW_HEADING) if line.strip()] == CANNOT_SHOW
     assert "- anything outside the listed repositories or outside GitHub" in lines
     written = sorted(p for p in (tmp_path / "record").rglob("*") if p.is_file())
     assert [p.name for p in written] == ["changes.csv", "record.json", "record.md"]
@@ -528,3 +537,12 @@ def test_S4_C5_a_check_of_the_tools_own_code_fails_on_any_call_that_is_not_a_rea
         found = read_only_check(copy)
         assert found.returncode != 0, name
         assert "planted.py" in found.stdout + found.stderr, name
+    # a call that is not a read inside the copy's own `github.py`, where the package's reads are made
+    copy = tmp_path / "github_py_with_POST" / "asrecorded"
+    shutil.copytree(REPO_ROOT / "asrecorded", copy, ignore=shutil.ignore_patterns("__pycache__"))
+    reads = (copy / "github.py").read_text(encoding="utf-8")
+    assert '"--method", "GET"' in reads
+    (copy / "github.py").write_text(reads.replace('"--method", "GET"', '"--method", "POST"'), encoding="utf-8")
+    found = read_only_check(copy)
+    assert found.returncode != 0, "github.py with --method POST"
+    assert "github.py" in found.stdout + found.stderr, "github.py with --method POST"
