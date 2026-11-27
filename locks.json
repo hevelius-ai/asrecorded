@@ -28,6 +28,16 @@
         "test_S3_C3_no_checks_at_all_says_no_checks_ran_never_passed",
         "test_S3_C4_a_check_named_asbuild_is_shown_like_any_other"
       ]
+    },
+    "tests/acceptance/S4/test_S4_the_record.py": {
+      "sha256": "e8a62006164748fa0f18bb7e90f4d6714b52657fb2b106a14195b191bb3a88c7",
+      "tests": [
+        "test_S4_C1_the_record_shows_the_totals_the_six_exceptions_and_every_change",
+        "test_S4_C2_without_a_rule_there_is_no_exceptions_section_and_patterns_are_counted",
+        "test_S4_C3_two_runs_give_the_same_files_and_the_record_holds_the_checksums",
+        "test_S4_C4_no_banned_word_or_email_address_and_the_fixed_section_word_for_word",
+        "test_S4_C5_a_check_of_the_tools_own_code_fails_on_any_call_that_is_not_a_read"
+      ]
     }
   }
 }
