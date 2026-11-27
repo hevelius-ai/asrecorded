@@ -168,3 +168,24 @@ def test_the_command_says_what_it_found_and_exits_with_a_code(
 def test_the_script_runs_as_a_command() -> None:
     done = subprocess.run([sys.executable, str(SCRIPT), str(PACKAGE)], capture_output=True, text=True, check=False)
     assert done.returncode == 0, done.stdout + done.stderr
+
+
+KNOWN_LIMITS = [
+    'import os as o\no.system("gh api -X POST x")\n',
+    'import os\ngetattr(os, "system")("gh api -X POST x")\n',
+    'import os\nx = os\nx.system("gh api -X POST x")\n',
+    'import shutil\nshutil.os.system("gh api -X POST x")\n',
+    'from asrecorded import github\ngithub.subprocess.run(["gh", "api", "-X", "POST", "x"])\n',
+    'from sys import modules\nmodules["subprocess"].run(["gh", "api", "-X", "POST", "x"])\n',
+    'getattr(__builtins__, "__import__")("socket")\n',
+    'import os\nvars(os)["system"]("gh api -X POST x")\n',
+]
+
+
+@pytest.mark.parametrize("planted", KNOWN_LIMITS)
+def test_the_stated_limit_code_written_to_hide_a_call_is_not_found(tmp_path: Path, planted: str) -> None:
+    """Decision S4-RO (the owner's choice PR14-2 B): the check reads code as written and does not follow where a name
+    leads, so these forms, found by PR #14's review round 2, pass it. They are held here so that the limit is known
+    and cannot change unseen: if the check is made to find one, move it to the list above."""
+    found, _ = read_only_check.check(package(tmp_path, planted))
+    assert found == []

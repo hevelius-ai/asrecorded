@@ -1,7 +1,8 @@
 """Read-only check: every call this package makes to GitHub is a read (S4, design §2, decision A4).
 
-Reads each Python file of a package folder, never runs it. It is an allow-list: what it does not know is a finding,
-so a later change that adds any other way out is caught here and must be looked at in review.
+Reads each Python file of a package folder, never runs it. It is an allow-list for code written plainly: a later
+change that adds another way out in the usual forms (another import, another process call, another list of words for
+gh, a write flag, a call outside github.py) is a finding and must be looked at in review.
 - Imports: only the modules in ALLOWED (and the package itself). Anything else, a network module or any other, is
   a finding; so is an import of a name given at run time (`exec`, `eval`, `compile`, `__import__`, `sys.modules`).
 - `os`: only `os.environ` and `os.replace`.
@@ -9,6 +10,13 @@ so a later change that adds any other way out is caught here and must be looked 
   `subprocess.run(command, ...)`, where `command` is set once, in the same function, to
   `[*program(), "api", "--method", "GET", "--paginate", "--slurp", path]` and never changed. Any other use of
   `subprocess`, in any file, is a finding.
+
+Limit (stated, decision S4-RO, the owner's choice PR14-2 B): it reads code as written and does not follow where a
+name leads, so code written on purpose to hide a call passes it: a module reached through another module or a new
+name (`shutil.os.system`, `github.subprocess.run`, `import os as o`, `x = os`), `getattr`, `vars`, `__builtins__`,
+`from sys import modules`, `global`, or an edit to `program()`. The second net is at run time: every check of the
+tool runs gh through a stand-in that answers read requests only, and `github.pages` refuses a path that starts with
+"-". tests/unit/test_read_only_check.py holds these forms as known limits.
 
 Use: python scripts/read_only_check.py <package folder>
 Exit codes: 0 every call is a read; 1 something else was found; 2 the check could not run.
