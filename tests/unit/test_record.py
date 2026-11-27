@@ -278,3 +278,22 @@ def test_two_check_names_that_differ_only_in_a_hidden_word_are_not_merged() -> N
     assert f"- {hidden}: success 1\n- {hidden}: failure 1\n" in text
     names = json.loads(as_json(record))["checks"]["by_name"]
     assert names == [{"name": hidden, "results": {"success": 1}}, {"name": hidden, "results": {"failure": 1}}]
+
+
+def test_the_same_push_in_two_repositories_is_two_pushes() -> None:
+    shop = Row(
+        Change("acme/shop", "b1b2c3d", "pushed directly", ROWS[2].change.when, {"login": "lee"}, {"sha": "b1"}, "p1"),
+        PUSHED,
+        None,
+        "checks not read for a direct push",
+        (),
+    )
+    mirror = Row(
+        Change("acme/other", "b1b2c3d", "pushed directly", ROWS[2].change.when, {"login": "lee"}, {"sha": "b1"}, "p1"),
+        PUSHED,
+        None,
+        "checks not read for a direct push",
+        (),
+    )
+    record = Record(RECORD.repositories, RECORD.start, RECORD.end, None, (shop, mirror), (), (), ())
+    assert "- Pushed directly: 2 commits in 2 pushes\n" in markdown(record, "", "")

@@ -88,7 +88,7 @@ def _checks(rows: tuple[Row, ...]) -> tuple[list[tuple[str, Counter[str]]], int,
 
 
 def _pushes(rows: tuple[Row, ...]) -> int:
-    return len({r.change.push for r in rows if r.change.how == DIRECT})
+    return len({(r.change.repository, r.change.push) for r in rows if r.change.how == DIRECT})  # per repository
 
 
 def _sentences(reasons: tuple[str, ...]) -> str:
