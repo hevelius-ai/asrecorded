@@ -303,3 +303,50 @@ def test_a_direct_push_is_listed_with_its_checks_named_as_not_read(tmp_path: Pat
     assert "- acme/shop: not covered: checks were not read for 1 commit pushed directly" in record
     assert f"[a1b2c3d](https://github.com/acme/shop/commit/{pushed})" in record
     assert "| no pull request: not shown | pushed by lee |" in record
+
+
+def test_a_record_md_that_cannot_be_removed_stops_before_anything_is_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "record"
+    output.mkdir()
+    for name in ("changes.csv", "record.json", "record.md"):
+        (output / name).write_bytes(b"earlier " + name.encode())
+    real = Path.unlink
+
+    def locked(self: Path, missing_ok: bool = False) -> None:
+        if self.name == "record.md":
+            raise PermissionError(13, "Access is denied")
+        real(self, missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", locked)
+    with pytest.raises(Stop) as stop:
+        write_files(output, FILES)
+    assert stop.value.message == (
+        f"Cannot replace {output / 'record.md'}: Access is denied. Close any program that has it open, then run "
+        "write again. The earlier record was kept whole. No record was written."
+    )
+    for name in ("changes.csv", "record.json", "record.md"):
+        assert (output / name).read_bytes() == b"earlier " + name.encode()
+    assert sorted(x.name for x in output.iterdir()) == ["changes.csv", "record.json", "record.md"]
+
+
+def test_a_failed_write_whose_record_md_cannot_be_removed_gives_one_plain_sentence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old = tmp_path / "record" / "record.md"
+    old.parent.mkdir()
+    old.write_text("an earlier record", encoding="utf-8")
+    real = Path.unlink
+
+    def locked(self: Path, missing_ok: bool = False) -> None:
+        if self.name == "record.md":
+            raise PermissionError(13, "Access is denied")
+        real(self, missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", locked)
+    with pytest.raises(Stop) as stop:
+        write(settings_in(tmp_path))  # type: ignore[arg-type]
+    assert stop.value.message == (
+        "The data folder has no saved repo.json for acme/shop. Run collect first. No record was written."
+    )

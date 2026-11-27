@@ -96,3 +96,17 @@ def test_the_rule_in_one_sentence() -> None:
     assert sentence(Rule((), ("all jobs passed",))) == (
         "The rule allows no pattern, and requires the check all jobs [a word this record does not use]."
     )
+
+
+def test_a_rule_file_that_cannot_be_read_is_refused(tmp_path: Path) -> None:
+    folder = tmp_path / "rule.toml"
+    folder.mkdir()
+    with pytest.raises(Stop) as stop:
+        load_rule(folder)
+    assert stop.value.message.startswith(f"Cannot read the rule file {folder}: ")
+    assert stop.value.message.endswith("No record was written.")
+    odd = tmp_path / "odd.toml"
+    odd.write_bytes(b'allowed_patterns = ["Two people"]  # \xff\n')
+    with pytest.raises(Stop) as stop:
+        load_rule(odd)
+    assert stop.value.message == f"The rule file {odd} is not plain text (UTF-8). No record was written."

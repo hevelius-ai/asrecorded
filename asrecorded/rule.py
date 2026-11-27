@@ -40,6 +40,10 @@ def load_rule(path: Path | None) -> Rule | None:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise Stop(f"Cannot find the rule file {path}. {STOP}") from None
+    except UnicodeDecodeError:
+        raise Stop(f"The rule file {path} is not plain text (UTF-8). {STOP}") from None
+    except OSError as error:
+        raise Stop(f"Cannot read the rule file {path}: {error.strerror or error}. {STOP}") from None
     except tomllib.TOMLDecodeError as error:
         raise Stop(f"The rule file {path} is not valid TOML: {error}. {STOP}") from None
     for key in raw:

@@ -26,7 +26,8 @@ def row(
     how = "pushed directly" if results is None else "pull request"
     commit = {"sha": change + "e" * 33} if results is None else None
     actor = {"login": "lee"} if results is None else None
-    return Row(Change(repo, change, how, parse(when), actor, commit), who, results, checks, reasons)
+    push = f"{'1' * 40}...{change}{'e' * 33}" if results is None else None
+    return Row(Change(repo, change, how, parse(when), actor, commit, push), who, results, checks, reasons)
 
 
 ROWS = (
@@ -87,6 +88,7 @@ Repositories: acme/shop, acme/other. Period: 2026-11-01 00:00 UTC (included) to 
 ## Totals
 
 - Changes: 5 (4 through a pull request, 1 pushed directly)
+- Pushed directly: 1 commit in 1 push
 - AI shown: 1
 - Exceptions under the rule: 2
 
@@ -113,7 +115,7 @@ The rule allows the patterns Two people and Agent and person, and requires the c
 
 ### acme/shop
 
-- #13: the pattern "One account" is not allowed by the rule. the required check "ci" did not end in success on the \
+- #13: the pattern "One account" is not allowed by the rule. The required check "ci" did not end in success on the \
 merged version (it shows: failure).
 
 ### acme/other
@@ -190,13 +192,18 @@ def test_the_record_for_programs_holds_the_same_facts() -> None:
         "changes": 5,
         "pull_requests": 4,
         "pushed_directly": 1,
+        "pushes": 1,
         "ai_shown": 1,
         "exceptions": 2,
     }
     assert data["patterns"]["One account"] == {"changes": 1, "declared_agent_operated": 1}
     assert data["patterns"]["Two people"] == {"changes": 2, "declared_agent_operated": 0}
     assert data["checks"] == {
-        "by_name": {"a|b": {"success": 1}, "ci": {"failure": 1, "success": 1}, "lint": {"success": 1}},
+        "by_name": [
+            {"name": "a|b", "results": {"success": 1}},
+            {"name": "ci", "results": {"failure": 1, "success": 1}},
+            {"name": "lint", "results": {"success": 1}},
+        ],
         "no_checks_ran": 1,
         "not_read_pushed_directly": 1,
     }
@@ -231,3 +238,43 @@ def test_a_repository_with_no_exception_gets_no_sub_heading() -> None:
     text = markdown(Record(RECORD.repositories, RECORD.start, RECORD.end, RECORD.rule, quiet, (), (), ()), "", "")
     assert "### acme/shop" in text
     assert "### acme/other" not in text
+
+
+def test_pushes_are_counted_beside_the_commits_they_brought(tmp_path: object) -> None:
+    two = row("acme/shop", "b1b2c3d", "2026-11-03T10:00:00Z", PUSHED, None, "checks not read for a direct push")
+    same_push = Row(
+        Change("acme/shop", "b1b2c3d", "pushed directly", two.change.when, {"login": "lee"}, {"sha": "b1"}, "p1"),
+        PUSHED,
+        None,
+        "checks not read for a direct push",
+        (),
+    )
+    also = Row(
+        Change("acme/shop", "c1b2c3d", "pushed directly", two.change.when, {"login": "lee"}, {"sha": "c1"}, "p1"),
+        PUSHED,
+        None,
+        "checks not read for a direct push",
+        (),
+    )
+    record = Record(RECORD.repositories, RECORD.start, RECORD.end, None, (same_push, also), (), (), ())
+    assert "- Pushed directly: 2 commits in 1 push\n" in markdown(record, "", "")
+    assert json.loads(as_json(record))["totals"]["pushes"] == 1
+    none = Record(RECORD.repositories, RECORD.start, RECORD.end, None, (ROWS[0],), (), (), ())
+    assert "- Pushed directly: 0 commits in 0 pushes\n" in markdown(none, "", "")
+
+
+def test_two_check_names_that_differ_only_in_a_hidden_word_are_not_merged() -> None:
+    both = row(
+        "acme/shop",
+        "#20",
+        "2026-11-02T10:00:00Z",
+        ROWS[0].who,
+        (("all required jobs approved", "success"), ("all required jobs passed", "failure")),
+        "",
+    )
+    record = Record(RECORD.repositories, RECORD.start, RECORD.end, None, (both,), (), (), ())
+    text = markdown(record, "", "")
+    hidden = "all required jobs [a word this record does not use]"
+    assert f"- {hidden}: success 1\n- {hidden}: failure 1\n" in text
+    names = json.loads(as_json(record))["checks"]["by_name"]
+    assert names == [{"name": hidden, "results": {"success": 1}}, {"name": hidden, "results": {"failure": 1}}]

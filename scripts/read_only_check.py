@@ -1,11 +1,14 @@
 """Read-only check: every call this package makes to GitHub is a read (S4, design §2, decision A4).
 
-Reads each Python file of a package folder, never runs it, and reports:
-- any import of a network module (the package talks to GitHub only through the `gh` command);
-- any import of a module by a name given at run time (it cannot be checked);
-- any process call (subprocess, os.system and the like) whose command is not a list holding "api", "--method",
-  "GET" in that order, or that also holds a way to write ("-X", another "--method", "-f", "-F", "--field",
-  "--raw-field", "--input").
+Reads each Python file of a package folder, never runs it. It is an allow-list: what it does not know is a finding,
+so a later change that adds any other way out is caught here and must be looked at in review.
+- Imports: only the modules in ALLOWED (and the package itself). Anything else, a network module or any other, is
+  a finding; so is an import of a name given at run time (`exec`, `eval`, `compile`, `__import__`, `sys.modules`).
+- `os`: only `os.environ` and `os.replace`.
+- Processes: only `github.py` may import `subprocess`, as `import subprocess`, and use it in one way only:
+  `subprocess.run(command, ...)`, where `command` is set once, in the same function, to
+  `[*program(), "api", "--method", "GET", "--paginate", "--slurp", path]` and never changed. Any other use of
+  `subprocess`, in any file, is a finding.
 
 Use: python scripts/read_only_check.py <package folder>
 Exit codes: 0 every call is a read; 1 something else was found; 2 the check could not run.
@@ -18,80 +21,74 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-NETWORK = {
-    "aiohttp",
-    "ftplib",
-    "http",
-    "httpx",
-    "imaplib",
-    "nntplib",
-    "poplib",
-    "requests",
-    "smtplib",
-    "socket",
-    "ssl",
-    "telnetlib",
-    "urllib",
-    "urllib3",
-    "websocket",
-    "websockets",
-    "xmlrpc",
+ALLOWED = {
+    "__future__",
+    "collections",
+    "contextlib",
+    "csv",
+    "dataclasses",
+    "datetime",
+    "hashlib",
+    "heapq",
+    "io",
+    "json",
+    "os",
+    "pathlib",
+    "re",
+    "shutil",
+    "subprocess",
+    "sys",
+    "tomllib",
+    "typing",
 }
-PROCESS: tuple[str, ...] = ("subprocess.", "os.system", "os.popen", "os.exec", "os.spawn", "os.posix_spawn")
-PROCESS += ("os.startfile", "pty.spawn", "asyncio.create_subprocess_")
-DYNAMIC = ("importlib.import_module", "__import__")
-READ = ["api", "--method", "GET"]
-WRITES = {"-X", "-f", "-F", "--field", "--raw-field", "--input"}
+OS_ALLOWED = {"environ", "replace"}
+RUN_TIME = {"exec", "eval", "compile", "__import__"}
+READ = ["api", "--method", "GET", "--paginate", "--slurp"]
+KEYWORDS = {"capture_output", "text", "encoding", "errors", "check"}
+HOME = "github.py"
 
 
-def _names(tree: ast.Module) -> dict[str, str]:
-    """Each local name an import gives, with the qualified name it stands for."""
-    names: dict[str, str] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                names[alias.asname or alias.name.split(".")[0]] = (
-                    alias.name if alias.asname else alias.name.split(".")[0]
-                )
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            for alias in node.names:
-                names[alias.asname or alias.name] = f"{node.module}.{alias.name}"
-    return names
+def _parents(tree: ast.AST) -> dict[int, ast.AST]:
+    return {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
 
 
-def _qualified(func: ast.expr, names: dict[str, str]) -> str:
-    if isinstance(func, ast.Name):
-        return names.get(func.id, func.id)
-    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
-        return f"{names.get(func.value.id, func.value.id)}.{func.attr}"
-    return ""
+def _function(node: ast.AST, parents: dict[int, ast.AST]) -> ast.AST | None:
+    current = parents.get(id(node))
+    while current is not None and not isinstance(current, ast.FunctionDef | ast.AsyncFunctionDef):
+        current = parents.get(id(current))
+    return current
 
 
-def _strings(node: ast.expr) -> list[str] | None:
-    """The words of a command written as a list (other items, such as `*program()`, are skipped)."""
-    if not isinstance(node, ast.List):
-        return None
-    return [item.value for item in node.elts if isinstance(item, ast.Constant) and isinstance(item.value, str)]
+def _the_read(command: ast.expr) -> bool:
+    """`[*program(), "api", "--method", "GET", "--paginate", "--slurp", path]`, exactly."""
+    if not isinstance(command, ast.List) or len(command.elts) != len(READ) + 2:
+        return False
+    first, *words, last = command.elts
+    starts = (
+        isinstance(first, ast.Starred)
+        and isinstance(first.value, ast.Call)
+        and isinstance(first.value.func, ast.Name)
+        and first.value.func.id == "program"
+        and not first.value.args
+    )
+    plain = [w.value if isinstance(w, ast.Constant) else None for w in words]
+    return starts and plain == READ and isinstance(last, ast.Name)
 
 
-def _command(call: ast.Call, scope: ast.AST) -> list[str] | None:
-    """The command a process call runs, when it is a list, or a name given a list in the same function."""
-    if not call.args:
-        return None
-    first = call.args[0]
-    if isinstance(first, ast.Name):
-        for node in ast.walk(scope):
-            if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == first.id for t in node.targets):
-                return _strings(node.value)
-        return None
-    return _strings(first)
-
-
-def _is_read(words: list[str]) -> bool:
-    has_read = any(words[i : i + 3] == READ for i in range(len(words)))
-    methods = [words[i + 1] for i, w in enumerate(words[:-1]) if w == "--method"]
-    other = any(w.startswith("--method=") and w != "--method=GET" for w in words)
-    return has_read and all(m == "GET" for m in methods) and not other and not WRITES.intersection(words)
+def _run_is_the_read(call: ast.Call, scope: ast.AST | None) -> bool:
+    """`subprocess.run(command, ...)` with `command` set once, to the read, and used nowhere else in the function."""
+    unknown_keyword = any(k.arg not in KEYWORDS for k in call.keywords)
+    if scope is None or unknown_keyword or len(call.args) != 1 or not isinstance(call.args[0], ast.Name):
+        return False
+    name = call.args[0].id
+    uses = [n for n in ast.walk(scope) if isinstance(n, ast.Name) and n.id == name]
+    sets = [
+        n
+        for n in ast.walk(scope)
+        if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
+        if n.targets[0].id == name
+    ]
+    return len(sets) == 1 and len(uses) == 2 and _the_read(sets[0].value)  # set once, read once: nothing else
 
 
 def _file(path: Path, name: str) -> list[str]:
@@ -99,34 +96,50 @@ def _file(path: Path, name: str) -> list[str]:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=name)
     except (SyntaxError, UnicodeDecodeError, ValueError):
         return [f"{name}:1: cannot be read as Python, so it cannot be checked"]
-    names = _names(tree)
+    parents = _parents(tree)
     found: list[str] = []
-    scopes: list[ast.AST] = [
-        tree,
-        *(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)),
-    ]
-    seen: set[int] = set()
+
+    def add(node: ast.AST, why: str) -> None:
+        found.append(f"{name}:{getattr(node, 'lineno', 1)}: {why}")
+
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import | ast.ImportFrom):
-            modules = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""]
-            for module in modules:
-                if module.split(".")[0] in NETWORK:
-                    found.append(f"{name}:{node.lineno}: imports {module}, a network module")
-    for scope in reversed(scopes):  # the innermost function first, so a name is looked up where it is set
-        for node in ast.walk(scope):
-            if not isinstance(node, ast.Call) or id(node) in seen:
-                continue
-            seen.add(id(node))
-            called = _qualified(node.func, names)
-            if called in DYNAMIC:
-                found.append(
-                    f"{name}:{node.lineno}: imports a module by a name given at run time, so it cannot be checked"
-                )
-            elif called.startswith(PROCESS):
-                words = _command(node, scope)
-                if words is None or not _is_read(words):
-                    found.append(f"{name}:{node.lineno}: runs a process that is not gh api --method GET ({called})")
-    return sorted(found, key=lambda line: int(line.split(":")[1]))
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".")[0]
+                if top not in ALLOWED and top != "asrecorded":
+                    add(node, f"imports {alias.name}, which this check does not allow")
+                elif top == "subprocess" and (name != HOME or alias.name != "subprocess" or alias.asname):
+                    add(node, "imports subprocess: only github.py may, as `import subprocess`")
+        elif isinstance(node, ast.ImportFrom):
+            top = (node.module or "").split(".")[0]
+            if node.level == 0 and top not in ALLOWED and top != "asrecorded":
+                add(node, f"imports from {node.module}, which this check does not allow")
+            elif top == "subprocess":
+                add(node, "imports from subprocess: only github.py may use it, as `import subprocess`")
+            elif top == "os" and any(a.name not in OS_ALLOWED for a in node.names):
+                add(node, f"imports from os something other than {', '.join(sorted(OS_ALLOWED))}")
+        elif isinstance(node, ast.Name) and node.id in RUN_TIME:
+            add(node, f"uses {node.id}, so what it runs cannot be checked")
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            if node.value.id == "os" and node.attr not in OS_ALLOWED:
+                add(node, f"uses os.{node.attr}: only os.environ and os.replace are allowed")
+            elif node.value.id == "sys" and node.attr == "modules":
+                add(node, "uses sys.modules, so what it runs cannot be checked")
+            elif node.value.id == "subprocess":
+                call = parents.get(id(node))
+                if not (
+                    name == HOME
+                    and node.attr == "run"
+                    and isinstance(call, ast.Call)
+                    and call.func is node
+                    and _run_is_the_read(call, _function(call, parents))
+                ):
+                    add(node, f"uses subprocess.{node.attr} other than as the one read, gh api --method GET")
+        if isinstance(node, ast.Name) and node.id == "subprocess":
+            holder = parents.get(id(node))
+            if not (isinstance(holder, ast.Attribute) and holder.value is node):
+                add(node, "uses subprocess other than as subprocess.run(...)")
+    return sorted(set(found), key=lambda line: (int(line.split(":")[1]), line))
 
 
 def check(folder: Path) -> tuple[list[str], int]:

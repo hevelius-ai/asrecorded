@@ -87,7 +87,7 @@ def write(settings: Settings) -> list[str]:
             {"changes.csv": csv_bytes, "record.json": json_bytes, "record.md": md_bytes.encode("utf-8")},
         )
     except Stop:
-        with contextlib.suppress(FileNotFoundError, NotADirectoryError):  # no record.md, or no output folder
+        with contextlib.suppress(OSError):  # no record.md, no output folder, or one that cannot be removed
             (settings.output / "record.md").unlink()
         raise
     lines = []
@@ -139,22 +139,44 @@ def changes_csv(
 
 
 def write_files(output: Path, files: dict[str, bytes]) -> None:
-    """Write each file to a temporary name, then put them in place in ORDER; on failure remove what is temporary."""
+    """Write each file to a temporary name, remove the earlier record.md, then put them in place in ORDER.
+
+    The earlier `record.md` goes first: if it cannot be removed (another program holds it), nothing is replaced, so
+    the earlier record stays whole and its checksums still match (PR #14 review, M1). On any failure, what is
+    temporary is removed."""
     temporary = {name: output / f"{name}.tmp" for name in ORDER}
     current = output / ORDER[0]
+    record = output / "record.md"
     try:
         output.mkdir(parents=True, exist_ok=True)
         for name in ORDER:
             current = output / name
             temporary[name].write_bytes(files[name])
+    except OSError as error:
+        _remove(temporary)
+        raise _cannot("write", current, error, "") from None
+    try:
+        record.unlink(missing_ok=True)
+    except OSError as error:
+        _remove(temporary)
+        raise _cannot("replace", record, error, " The earlier record was kept whole.") from None
+    try:
         for name in ORDER:
             current = output / name
             os.replace(temporary[name], current)
     except OSError as error:
-        for path in temporary.values():
-            with contextlib.suppress(FileNotFoundError, NotADirectoryError):
-                path.unlink()
-        raise Stop(
-            f"Cannot write {current}: {error.strerror or error}. Close any program that has it open, then run write "
-            "again. No record was written."
-        ) from None
+        _remove(temporary)
+        raise _cannot("write", current, error, "") from None
+
+
+def _remove(paths: dict[str, Path]) -> None:
+    for path in paths.values():
+        with contextlib.suppress(OSError):
+            path.unlink()
+
+
+def _cannot(verb: str, path: Path, error: OSError, kept: str) -> Stop:
+    return Stop(
+        f"Cannot {verb} {path}: {error.strerror or error}. Close any program that has it open, then run write "
+        f"again.{kept} No record was written."
+    )

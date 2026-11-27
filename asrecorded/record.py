@@ -16,7 +16,7 @@ from typing import Any, cast
 from asrecorded.changes import DIRECT, Change
 from asrecorded.checks import Results
 from asrecorded.rule import PATTERNS, Rule, sentence
-from asrecorded.times import clock, day, iso
+from asrecorded.times import clock, count, day, iso
 from asrecorded.who import ONE_ACCOUNT, Who
 from asrecorded.wording import mask
 
@@ -71,7 +71,9 @@ def _period(record: Record) -> str:
     )
 
 
-def _checks(rows: tuple[Row, ...]) -> tuple[dict[str, Counter[str]], int, int]:
+def _checks(rows: tuple[Row, ...]) -> tuple[list[tuple[str, Counter[str]]], int, int]:
+    """Results per check, kept apart by the real name and shown by the printed one: two names that differ only in a
+    hidden word stay two lines (PR #14 review, M5)."""
     by_name: dict[str, Counter[str]] = {}
     none_ran = not_read = 0
     for row in rows:
@@ -80,8 +82,18 @@ def _checks(rows: tuple[Row, ...]) -> tuple[dict[str, Counter[str]], int, int]:
         elif not row.results:
             none_ran += 1
         for name, state in row.results or ():
-            by_name.setdefault(mask(name), Counter())[state] += 1
-    return dict(sorted(by_name.items(), key=lambda item: (item[0].casefold(), item[0]))), none_ran, not_read
+            by_name.setdefault(name, Counter())[state] += 1
+    shown = sorted(by_name.items(), key=lambda item: (mask(item[0]).casefold(), mask(item[0]), item[0]))
+    return [(mask(name), states) for name, states in shown], none_ran, not_read
+
+
+def _pushes(rows: tuple[Row, ...]) -> int:
+    return len({r.change.push for r in rows if r.change.how == DIRECT})
+
+
+def _sentences(reasons: tuple[str, ...]) -> str:
+    """Each reason after the first starts a new sentence, so it starts with a capital letter."""
+    return " ".join(r if i == 0 else r[:1].upper() + r[1:] for i, r in enumerate(reasons))
 
 
 def _exceptions(record: Record, rule: Rule) -> list[str]:
@@ -92,7 +104,7 @@ def _exceptions(record: Record, rule: Rule) -> list[str]:
         pushes = sorted((r for r in mine if r.change.how == DIRECT), key=lambda r: (r.change.when, r.change.change))
         if pulls or pushes:
             lines += [f"### {repository}", ""]
-            lines += [f"- {r.change.change}: {' '.join(r.reasons)}" for r in pulls + pushes]
+            lines += [f"- {r.change.change}: {_sentences(r.reasons)}" for r in pulls + pushes]
             lines.append("")
     return lines
 
@@ -109,6 +121,7 @@ def markdown(record: Record, csv_sum: str, json_sum: str) -> str:
         "",
         f"- Changes: {len(rows)} ({pulls} through a pull request, {len(rows) - pulls} pushed directly)",
     ]
+    lines.append(f"- Pushed directly: {count(len(rows) - pulls, 'commit')} in {count(_pushes(rows), 'push', 'pushes')}")
     lines.append(f"- AI shown: {sum(1 for r in rows if r.who.ai_shown == 'yes')}")
     if record.rule is not None:
         lines.append(f"- Exceptions under the rule: {sum(1 for r in rows if r.reasons)}")
@@ -117,7 +130,7 @@ def markdown(record: Record, csv_sum: str, json_sum: str) -> str:
         extra = f", of which {declared} declared agent-operated" if pattern == ONE_ACCOUNT else ""
         lines.append(f"- {pattern}: {patterns[pattern]}{extra}")
     lines += ["", "## Checks on the merged version", ""]
-    for name, states in by_name.items():
+    for name, states in by_name:
         counts = sorted(states.items(), key=lambda item: (-item[1], item[0]))
         lines.append(f"- {_cell(name)}: " + ", ".join(f"{state} {n}" for state, n in counts))
     lines += [f"- No checks ran: {none_ran}", f"- Not read (pushed directly): {not_read}", ""]
@@ -167,6 +180,7 @@ def as_json(record: Record) -> str:
             "changes": len(rows),
             "pull_requests": pulls,
             "pushed_directly": len(rows) - pulls,
+            "pushes": _pushes(rows),
             "ai_shown": sum(1 for r in rows if r.who.ai_shown == "yes"),
             "exceptions": None if record.rule is None else sum(1 for r in rows if r.reasons),
         },
@@ -180,7 +194,7 @@ def as_json(record: Record) -> str:
             for pattern in PATTERNS
         },
         "checks": {
-            "by_name": {name: dict(states) for name, states in by_name.items()},
+            "by_name": [{"name": name, "results": dict(states)} for name, states in by_name],
             "no_checks_ran": none_ran,
             "not_read_pushed_directly": not_read,
         },
