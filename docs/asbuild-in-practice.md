@@ -26,6 +26,9 @@ A log of using AsBuild v0.4.2 to build this repository: each verdict, each time 
 | 2026-11-27 | `/asbuild:verdict`, PR #9 (S2 build) | PROVEN at each of three heads: 3027b92 (220 other tests, 0 broken), 5f9e388 (232) and d2b64f4 (233); each said "S2-C1 to C5 work". The verdict came about two minutes after the push each time | 0 |
 | 2026-11-27 | `/asbuild:verdict`, PR #10 (a fix no story covers) | WAITING FOR YOU, `NO_STORY` (branch `fix/read-errors`); 240 other tests, 0 broken. Expected: the owner's merge is the decision, as for PRs #1, #3, #4 and #6 | 0 |
 | 2026-11-27 | `/asbuild:story` S3, PR #11 | `asbuild_story_check.py S3 --lock` passed on the first run (4 checks, 4 tests); lint ran before the lock this time. The owner approved the four lines with no question asked: the agreed design had settled every open point. WAITING FOR YOU on the story pull request, as always | 0 |
+| 2026-11-27 | `/asbuild:verdict`, PR #12 (S3 build) | PROVEN at each of three heads: 1e8ce0e (251 other tests, 0 broken), a1eb8b8 (255) and 26e3d4e (255, a docs-only commit); each said "S3-C1 to C4 work" | 0 |
+| 2026-11-27 | `/asbuild:story` S4, PR #13 | `asbuild_story_check.py S4 --lock` passed on the first run (5 checks, 5 tests). A check that a test of the code itself exists (line 5) had to fail before the build: written as a script the build adds (`scripts/read_only_check.py`), proved on the package and on copies with planted calls that are not reads | 0 |
+| 2026-11-27 | Changing locked tests before the story merge, PR #13 | The procedure as for S1 and S2 (owner's permission PR13-2A, a new session, `--lock`). **Got in the way:** an empty `.git/index.lock`, left by a git command interrupted at the end of the fix session, stopped the first commit; it was removed after checking no git process ran | 0 |
 
 ## Summary (written at the release)
 

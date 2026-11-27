@@ -95,6 +95,16 @@ TIMES = 'start = "2026-11-01T00:00:00Z"\nend = "2026-12-01T00:00:00Z"\n'
             '"agent_accounts" in the settings must be a list of words in quotes.',
         ),
         (GOOD + "disclosures = [1]\n", '"disclosures" in the settings must be a list of words in quotes.'),
+        (
+            GOOD + 'disclosures = ["Fine.", "Every change passed review."]\n',
+            'Disclosure 2 in the settings holds the word "passed", which a record never uses. Change it, then '
+            "run this again.",
+        ),
+        (
+            GOOD + 'disclosures = ["Write to ops' + "@" + 'example.invalid."]\n',
+            "Disclosure 1 in the settings holds an email address, which a record never shows. Change it, then run "
+            "this again.",
+        ),
         (GOOD + "data = 1\n", '"data" in the settings must be a path in quotes.'),
         (GOOD + 'output = ""\n', '"output" in the settings must be a path in quotes.'),
         (GOOD + "rule = []\n", '"rule" in the settings must be a path in quotes.'),

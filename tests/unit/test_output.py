@@ -11,7 +11,7 @@ import pytest
 
 from asrecorded.changes import Change, RepositoryList
 from asrecorded.errors import Stop
-from asrecorded.output import write, write_changes
+from asrecorded.output import changes_csv, write, write_files
 from asrecorded.settings import load
 from asrecorded.times import parse
 from asrecorded.who import Who
@@ -20,6 +20,7 @@ HEADER = (
     "repository,change,how,when,builder,let_in_by,approvals,ai_shown,ai_trace,pattern,declared_agent_operated,checks\n"
 )
 ONE = Who("dana", "dana", "", "not shown", "", "One account", "")
+FILES = {"changes.csv": b"rows\n", "record.json": b"{}\n", "record.md": b"# Record\n"}
 
 
 def test_rows_are_sorted_by_repository_order_then_time_then_id(tmp_path: Path) -> None:
@@ -53,9 +54,8 @@ def test_rows_are_sorted_by_repository_order_then_time_then_id(tmp_path: Path) -
         ("acme/shop", "b000000"): direct,
         ("acme/joined", "#2"): "no checks ran on the merged version",
     }
-    path = write_changes(tmp_path / "record", [shop, joined], details, checks)
-    assert path == tmp_path / "record" / "changes.csv"
-    assert path.read_bytes() == HEADER.encode() + (
+    text = changes_csv([shop, joined], details, checks)
+    assert text.encode() == HEADER.encode() + (
         b"acme/shop,#11,pull request,2026-11-02T10:00:00Z,dana,dana,lee (on the merged version),not shown,,"
         b"Two people,,AsBuild: success; ci: failure\n"
         b"acme/shop,a000000,pushed directly,2026-11-09T10:00:00Z,no pull request: not shown,pushed by lee,,"
@@ -65,7 +65,6 @@ def test_rows_are_sorted_by_repository_order_then_time_then_id(tmp_path: Path) -
         b"acme/joined,#2,pull request,2026-11-08T10:00:00Z,bot,bot,,yes,declared agent-operated account,"
         b"One account,yes,no checks ran on the merged version\n"
     )
-    assert sorted(p.name for p in path.parent.iterdir()) == ["changes.csv"]
 
 
 def settings_in(tmp_path: Path) -> object:
@@ -92,13 +91,17 @@ def test_write_reads_the_data_folder_only_and_says_what_it_wrote(tmp_path: Path)
     )
     save(folder / "main_commits.json", [])
     lines = write(settings_in(tmp_path))  # type: ignore[arg-type]
-    path = tmp_path / "record" / "changes.csv"
+    output = tmp_path / "record"
     assert lines == [
         "acme/shop: 0 changes (0 pull requests, 0 commits pushed directly)",
         "acme/shop: One account 0 (0 declared agent-operated)",
-        f"Wrote {path}: 0 changes from 1 repository.",
+        f"Wrote record.md, changes.csv and record.json in {output}: 0 changes from 1 repository.",
     ]
-    assert path.read_text(encoding="utf-8") == HEADER
+    assert (output / "changes.csv").read_text(encoding="utf-8") == HEADER
+    assert sorted(x.name for x in output.iterdir()) == ["changes.csv", "record.json", "record.md"]
+    record = (output / "record.md").read_text(encoding="utf-8")
+    assert "- Changes: 0 (0 through a pull request, 0 pushed directly)" in record
+    assert "## What was not covered\n\n- Nothing.\n" in record
 
 
 def test_a_failed_write_removes_the_record_it_would_replace(tmp_path: Path) -> None:
@@ -130,9 +133,8 @@ def test_a_write_that_fails_keeps_the_earlier_changes_file_whole(
         raise PermissionError(13, "Access is denied")
 
     monkeypatch.setattr("asrecorded.output.os.replace", refuse)
-    shop = RepositoryList("acme/shop", [Change("acme/shop", "#11", "pull request", parse("2026-11-02T10:00:00Z"))])
     with pytest.raises(Stop) as stop:
-        write_changes(tmp_path / "record", [shop], {("acme/shop", "#11"): ONE}, {("acme/shop", "#11"): ""})
+        write_files(tmp_path / "record", FILES)
     assert stop.value.message == (
         f"Cannot write {earlier}: Access is denied. Close any program that has it open, then run write again. "
         "No record was written."
@@ -144,9 +146,8 @@ def test_a_write_that_fails_keeps_the_earlier_changes_file_whole(
 def test_an_output_that_names_a_file_gives_one_plain_sentence(tmp_path: Path) -> None:
     taken = tmp_path / "record"
     taken.write_text("a file, not a folder", encoding="utf-8")
-    shop = RepositoryList("acme/shop", [Change("acme/shop", "#11", "pull request", parse("2026-11-02T10:00:00Z"))])
     with pytest.raises(Stop) as stop:
-        write_changes(taken, [shop], {("acme/shop", "#11"): ONE}, {("acme/shop", "#11"): ""})
+        write_files(taken, FILES)
     assert stop.value.message.startswith(f"Cannot write {taken / 'changes.csv'}: ")
     assert stop.value.message.endswith("No record was written.")
     assert taken.read_text(encoding="utf-8") == "a file, not a folder"
@@ -221,6 +222,84 @@ def test_logins_come_only_from_authenticated_actions_and_the_wording_rules_hold(
     logins = {r["builder"] for r in rows} | {r["let_in_by"] for r in rows}
     logins |= {a.split(" (on ")[0] for r in rows for a in r["approvals"].split("; ") if a}
     assert logins <= {"dana", "lee"}
-    text = path.read_text(encoding="utf-8") + "\n".join(lines)
+    text = "\n".join(lines) + "".join(
+        (tmp_path / "record" / name).read_text(encoding="utf-8") for name in ("changes.csv", "record.json", "record.md")
+    )
     assert "@" not in text
     assert not BANNED.search(text)
+    assert "claude " not in text.lower().replace("claude (anthropic)", "")
+
+
+def test_the_three_files_are_renamed_only_when_all_are_written_and_record_md_last(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    renamed: list[str] = []
+    real = os.replace
+
+    def watch(source: str | os.PathLike[str], target: str | os.PathLike[str]) -> None:
+        if not renamed:  # before the first rename, all three are written in full
+            listed = sorted(x.name for x in Path(source).parent.iterdir())
+            assert listed == ["changes.csv.tmp", "record.json.tmp", "record.md.tmp"]
+        renamed.append(Path(target).name)
+        real(source, target)
+
+    monkeypatch.setattr("asrecorded.output.os.replace", watch)
+    write_files(tmp_path / "record", FILES)
+    assert renamed == ["changes.csv", "record.json", "record.md"]
+    assert (tmp_path / "record" / "record.md").read_bytes() == b"# Record\n"
+    assert sorted(x.name for x in (tmp_path / "record").iterdir()) == ["changes.csv", "record.json", "record.md"]
+
+
+def test_a_write_whose_record_md_cannot_be_renamed_leaves_no_temporary_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    real = os.replace
+
+    def refuse_md(source: str | os.PathLike[str], target: str | os.PathLike[str]) -> None:
+        if Path(target).name == "record.md":
+            raise PermissionError(13, "Access is denied")
+        real(source, target)
+
+    monkeypatch.setattr("asrecorded.output.os.replace", refuse_md)
+    with pytest.raises(Stop) as stop:
+        write_files(tmp_path / "record", FILES)
+    assert stop.value.message.startswith(f"Cannot write {tmp_path / 'record' / 'record.md'}: Access is denied.")
+    assert sorted(x.name for x in (tmp_path / "record").iterdir()) == ["changes.csv", "record.json"]
+
+
+def test_a_direct_push_is_listed_with_its_checks_named_as_not_read(tmp_path: Path) -> None:
+    folder = tmp_path / "data" / "acme__shop"
+    root, pushed = "1" * 40, "a1b2c3d" + "4" * 33
+    lee = {"login": "lee", "id": 1002, "type": "User"}
+    save(folder / "repo.json", {"default_branch": "main", "created_at": "2026-10-01T00:00:00Z"})
+    save(folder / "pulls.json", [])
+    save(
+        folder / "activity.json",
+        [
+            {
+                "activity_type": "branch_creation",
+                "before": "0" * 40,
+                "after": root,
+                "timestamp": "2026-10-01T00:00:00Z",
+            },
+            {
+                "activity_type": "push",
+                "before": root,
+                "after": pushed,
+                "timestamp": "2026-11-09T10:00:00Z",
+                "actor": lee,
+            },
+        ],
+    )
+    save(folder / "main_commits.json", [])
+    piece = {"sha": pushed, "parents": [{"sha": root}], "commit": {"message": "work", "author": {"name": "lee"}}}
+    save(folder / "push" / f"{root}...{pushed}.json", [piece])
+    write(settings_in(tmp_path))  # type: ignore[arg-type]
+    record = (tmp_path / "record" / "record.md").read_text(encoding="utf-8")
+    assert "- acme/shop: not covered: checks were not read for 1 commit pushed directly" in record
+    assert f"[a1b2c3d](https://github.com/acme/shop/commit/{pushed})" in record
+    assert "| no pull request: not shown | pushed by lee |" in record
