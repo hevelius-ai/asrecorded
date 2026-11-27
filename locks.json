@@ -19,6 +19,15 @@
         "test_S2_C4_the_row_says_whether_ai_is_shown_and_which_kind",
         "test_S2_C5_a_declared_account_merging_its_own_change_is_counted_under_both"
       ]
+    },
+    "tests/acceptance/S3/test_S3_checks_on_the_merged_version.py": {
+      "sha256": "a62ee780bff428a5eb6c66d0462b43d1df9598bd947df9ff59aa8c5dfa96bcbf",
+      "tests": [
+        "test_S3_C1_16_shows_its_ci_check_failed_on_the_merged_version",
+        "test_S3_C2_checks_only_on_an_earlier_commit_are_not_shown_as_ran",
+        "test_S3_C3_no_checks_at_all_says_no_checks_ran_never_passed",
+        "test_S3_C4_a_check_named_asbuild_is_shown_like_any_other"
+      ]
     }
   }
 }
