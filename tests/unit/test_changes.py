@@ -242,6 +242,27 @@ def test_a_missing_detail_file_is_named(tmp_path: Path) -> None:
     )
 
 
+def test_a_saved_file_that_cannot_be_opened_gives_a_plain_sentence(tmp_path: Path) -> None:
+    folder = repository(tmp_path, pulls=[pull(11, "2026-11-02T10:00:00Z", 103)], activity=[], main=[])
+    (folder / "pr" / "11" / "pull.json").mkdir(parents=True)  # opening it fails as a locked file does on Windows
+    with pytest.raises(Stop) as stop:
+        list_changes("acme/shop", folder, START, END)
+    assert stop.value.message.startswith("Cannot read the saved data for acme/shop: ")
+    assert stop.value.message.endswith(
+        "Close any program that has it open, then run write again. No record was written."
+    )
+
+
+def test_saved_data_nested_too_deep_gives_a_plain_sentence(tmp_path: Path) -> None:
+    folder = repository(tmp_path, pulls=[], activity=[], main=[])
+    (folder / "activity.json").write_text("[" * 100000 + "]" * 100000, encoding="utf-8")
+    with pytest.raises(Stop) as stop:
+        list_changes("acme/shop", folder, START, END)
+    assert stop.value.message == (
+        "The saved data for acme/shop could not be read. Run collect again. No record was written."
+    )
+
+
 def test_saved_data_of_an_unexpected_shape_is_refused(tmp_path: Path) -> None:
     folder = repository(tmp_path, pulls=[{"number": 11, "merged_at": "yesterday"}], activity=[], main=[])
     with pytest.raises(Stop) as stop:

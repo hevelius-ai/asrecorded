@@ -67,7 +67,12 @@ def list_changes(repository: str, folder: Path, start: datetime, end: datetime) 
         raise Stop(
             f"The saved data for {repository} is missing {name}. Run collect again. No record was written."
         ) from None
-    except (KeyError, IndexError, TypeError, ValueError, AttributeError):
+    except OSError as error:  # a locked file, or a folder where a file should be
+        raise Stop(
+            f"Cannot read the saved data for {repository}: {error.strerror or error}. Close any program that has "
+            "it open, then run write again. No record was written."
+        ) from None
+    except (KeyError, IndexError, TypeError, ValueError, AttributeError, RecursionError):
         raise Stop(
             f"The saved data for {repository} could not be read. Run collect again. No record was written."
         ) from None
