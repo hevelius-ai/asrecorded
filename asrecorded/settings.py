@@ -48,6 +48,11 @@ def load(path: Path) -> Settings:
             raise Stop(f'"{name}" in "repositories" is not written as owner/name.')
         if repositories.count(name) > 1:
             raise Stop(f'"{name}" is listed twice in "repositories".')
+        problems = found(name)  # a record prints the name as written (decision S4-W2)
+        if problems:
+            raise Stop(
+                f'"{name}" in "repositories" holds {problems[0]}, which a record never uses. No record was written.'
+            )
     start, end = _time(raw, "start"), _time(raw, "end")
     if start >= end:
         raise Stop('The settings\' "start" must be before "end".')

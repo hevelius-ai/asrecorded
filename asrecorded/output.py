@@ -22,6 +22,7 @@ from asrecorded.rule import load_rule, reasons
 from asrecorded.settings import Settings, folder_name
 from asrecorded.times import clock, count, day, iso
 from asrecorded.who import Who, describe, pattern_line
+from asrecorded.wording import found
 
 COLUMNS = (
     "repository",
@@ -79,6 +80,7 @@ def write(settings: Settings) -> list[str]:
             ),
             disclosures=settings.disclosures,
         )
+        _refuse_banned_logins(record.rows, lists)
         csv_bytes = changes_csv_from_rows(record.rows).encode("utf-8")
         json_bytes = as_json(record).encode("utf-8")
         md_bytes = markdown(record, hashlib.sha256(csv_bytes).hexdigest(), hashlib.sha256(json_bytes).hexdigest())
@@ -180,3 +182,39 @@ def _cannot(verb: str, path: Path, error: OSError, kept: str) -> Stop:
         f"Cannot {verb} {path}: {error.strerror or error}. Close any program that has it open, then run write "
         f"again.{kept} No record was written."
     )
+
+
+PREFIXES = ("auto-merge switched on by ", "merge queue: added by ", "pushed by ")
+
+
+def _logins(who: Who) -> list[str]:
+    """The logins a row prints: the builder, who let it in, each approver."""
+    logins = [] if who.builder.startswith("no pull request") else [who.builder]
+    let_in = who.let_in_by
+    for prefix in PREFIXES:
+        let_in = let_in.removeprefix(prefix)
+    if not let_in.endswith("(account not shown)"):
+        logins.append(let_in)
+    logins += [a.rsplit(" (on ", 1)[0] for a in who.approvals.split("; ") if a]
+    return logins
+
+
+def _refuse_banned_logins(rows: list[Row] | tuple[Row, ...], lists: list[RepositoryList]) -> None:
+    """A record never holds a banned word (BRD section 7); a login is printed as GitHub gives it, so a record that
+    would print such a login is refused with one plain sentence (decision S4-W2, the owner's choice PR14-1 C)."""
+    for row in rows:
+        for login in _logins(row.who):
+            problems = found(login)
+            if problems:
+                raise Stop(
+                    f'{row.change.repository} {row.change.change}: the login "{login}" holds {problems[0]}, which a '
+                    "record never uses. No record was written."
+                )
+    for result in lists:
+        for rewrite in result.rewrites:
+            problems = found(rewrite.actor)
+            if problems:
+                raise Stop(
+                    f'{result.repository}: the login "{rewrite.actor}" holds {problems[0]}, which a record never uses. '
+                    "No record was written."
+                )

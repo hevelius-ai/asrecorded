@@ -81,6 +81,11 @@ TIMES = 'start = "2026-11-01T00:00:00Z"\nend = "2026-12-01T00:00:00Z"\n'
         ('repositories = ["acme/"]\n' + TIMES, '"acme/" in "repositories" is not written as owner/name.'),
         ('repositories = ["a/b/c"]\n' + TIMES, '"a/b/c" in "repositories" is not written as owner/name.'),
         ('repositories = ["acme/shop", "acme/shop"]\n' + TIMES, '"acme/shop" is listed twice in "repositories".'),
+        (
+            'repositories = ["acme/shop", "acme/safe-shop"]\n' + TIMES,
+            '"acme/safe-shop" in "repositories" holds the word "safe", which a record never uses. '
+            "No record was written.",
+        ),
         ('repositories = ["acme/shop"]\nend = "2026-12-01T00:00:00Z"\n', START),
         ('repositories = ["acme/shop"]\nstart = "2026-11-01T00:00:00"\nend = "2026-12-01T00:00:00Z"\n', START),
         ('repositories = ["acme/shop"]\nstart = "yesterdayZ"\nend = "2026-12-01T00:00:00Z"\n', START),

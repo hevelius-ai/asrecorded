@@ -350,3 +350,121 @@ def test_a_failed_write_whose_record_md_cannot_be_removed_gives_one_plain_senten
     assert stop.value.message == (
         "The data folder has no saved repo.json for acme/shop. Run collect first. No record was written."
     )
+
+
+def one_pull_request(tmp_path: Path, merger: str, approver: str = "lee") -> None:
+    """Data for acme/shop: pull request #5, opened by dana, merged by `merger`, approved by `approver`."""
+    folder = tmp_path / "data" / "acme__shop"
+    root, head, merge = "1" * 40, "2" * 40, "3" * 40
+    dana = {"login": "dana", "id": 1001, "type": "User"}
+    merged = "2026-11-05T10:00:00Z"
+    save(folder / "repo.json", {"default_branch": "main", "created_at": "2026-10-01T00:00:00Z"})
+    pulls = [{"number": 5, "merged_at": merged, "merge_commit_sha": merge, "base": {"ref": "main"}}]
+    save(folder / "pulls.json", pulls)
+    save(
+        folder / "activity.json",
+        [
+            {"activity_type": "branch_creation", "before": "0", "after": root, "timestamp": "2026-10-01T00:00:00Z"},
+            {"activity_type": "pr_merge", "before": root, "after": merge, "timestamp": merged, "actor": dana},
+        ],
+    )
+    save(folder / "main_commits.json", [])
+    piece = {"sha": head, "parents": [{"sha": root}], "commit": {"message": "work", "author": {"name": "dana"}}}
+    save(folder / "pr" / "5" / "commits.json", [piece])
+    by = {"login": merger, "id": 1003, "type": "User"}
+    pull = {"number": 5, "commits": 1, "merged_at": merged, "head": {"sha": head}, "user": dana, "merged_by": by}
+    save(folder / "pr" / "5" / "pull.json", pull)
+    review = {
+        "id": 9,
+        "user": {"login": approver, "id": 1004, "type": "User"},
+        "state": "APPROVED",
+        "commit_id": head,
+        "submitted_at": "2026-11-05T09:00:00Z",
+    }
+    save(folder / "pr" / "5" / "reviews.json", [review])
+    save(folder / "pr" / "5" / "timeline.json", [{"event": "merged", "actor": by, "created_at": merged}])
+    save(folder / "pr" / "5" / "check_runs.json", [])
+    save(folder / "pr" / "5" / "statuses.json", [])
+
+
+@pytest.mark.parametrize(
+    ("merger", "approver", "message"),
+    [
+        (
+            "secure-lee",
+            "lee",
+            'acme/shop #5: the login "secure-lee" holds the word "secure", which a record never uses. '
+            "No record was written.",
+        ),
+        (
+            "lee",
+            "approved",
+            'acme/shop #5: the login "approved" holds the word "approved", which a record never uses. '
+            "No record was written.",
+        ),
+    ],
+)
+def test_a_login_the_record_would_print_with_a_banned_word_stops_the_write(
+    tmp_path: Path, merger: str, approver: str, message: str
+) -> None:
+    """Decision S4-W2 (the owner's choice PR14-1 C): such a record is refused, never written with the word."""
+    one_pull_request(tmp_path, merger, approver)
+    old = tmp_path / "record" / "record.md"
+    old.parent.mkdir()
+    old.write_text("an earlier record", encoding="utf-8")
+    with pytest.raises(Stop) as stop:
+        write(settings_in(tmp_path))  # type: ignore[arg-type]
+    assert stop.value.message == message
+    assert not old.exists()
+    assert sorted(x.name for x in old.parent.iterdir()) == []
+
+
+def test_a_login_that_rewrote_history_with_a_banned_word_stops_the_write(tmp_path: Path) -> None:
+    one_pull_request(tmp_path, "lee")
+    folder = tmp_path / "data" / "acme__shop"
+    activity = json.loads((folder / "activity.json").read_text(encoding="utf-8"))
+    merge, again = "3" * 40, "4" * 40
+    ops = {"login": "safe-ops", "id": 1009, "type": "User"}
+    activity.append(
+        {
+            "activity_type": "force_push",
+            "before": merge,
+            "after": again,
+            "timestamp": "2026-11-06T10:00:00Z",
+            "actor": ops,
+        }
+    )
+    save(folder / "activity.json", activity)
+    save(folder / "push" / f"{merge}...{again}.json", [{"sha": again, "parents": [{"sha": merge}]}])
+    with pytest.raises(Stop) as stop:
+        write(settings_in(tmp_path))  # type: ignore[arg-type]
+    assert stop.value.message == (
+        'acme/shop: the login "safe-ops" holds the word "safe", which a record never uses. No record was written.'
+    )
+
+
+def test_logins_with_no_banned_word_are_written(tmp_path: Path) -> None:
+    one_pull_request(tmp_path, "lee", "safely-reviewed")
+    folder = tmp_path / "data" / "acme__shop"
+    # auto-merge switched on by an account GitHub does not show, and a history rewrite by a login with no banned word
+    timeline = json.loads((folder / "pr" / "5" / "timeline.json").read_text(encoding="utf-8"))
+    save(folder / "pr" / "5" / "timeline.json", [{"event": "auto_merge_enabled", "actor": None}, *timeline])
+    activity = json.loads((folder / "activity.json").read_text(encoding="utf-8"))
+    merge, again = "3" * 40, "4" * 40
+    lee = {"login": "lee", "id": 1002, "type": "User"}
+    activity.append(
+        {
+            "activity_type": "force_push",
+            "before": merge,
+            "after": again,
+            "timestamp": "2026-11-06T10:00:00Z",
+            "actor": lee,
+        }
+    )
+    save(folder / "activity.json", activity)
+    save(folder / "push" / f"{merge}...{again}.json", [{"sha": again, "parents": [{"sha": merge}]}])
+    write(settings_in(tmp_path))  # type: ignore[arg-type]
+    record = (tmp_path / "record" / "record.md").read_text(encoding="utf-8")
+    assert "safely-reviewed (on the merged version)" in record
+    assert "auto-merge switched on (account not shown)" in record
+    assert "- acme/shop: history rewritten on 2026-11-06 at 10:00 UTC by lee, 1 commit brought in" in record
