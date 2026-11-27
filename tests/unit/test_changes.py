@@ -425,6 +425,78 @@ def test_a_merge_pushed_after_the_period_explains_only_what_its_before_did_not_h
     ]
 
 
+def test_a_commit_the_before_side_reaches_by_a_longer_path_is_not_counted(tmp_path: Path) -> None:
+    # The late push 9 -> 3 brought only 3: commit 2 is its second parent, but 9 holds it too, through 8. The walk
+    # must reach 2 from 9's side before it counts 2 as brought (3's hash sorts before 9's, and 2's before 8's).
+    folder = repository(
+        tmp_path,
+        pulls=[],
+        activity=[
+            entry("push", h(9), h(3), "2026-12-02T10:00:00Z"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[
+            commit(3, [9, 2], "2026-12-02T10:00:00Z"),
+            commit(9, [8], OUTSIDE),
+            commit(8, [2], OUTSIDE),
+            commit(2, [1], "2026-11-10T10:00:00Z"),
+            commit(1, [], OUTSIDE),
+        ],
+    )
+    assert list_changes("acme/shop", folder, START, END).not_covered == [
+        f"acme/shop: not covered: commit {h(2)[:7]} on the main line, dated 2026-11-10 at 10:00 UTC, "
+        "is not explained by the activity history"
+    ]
+
+
+def test_a_commit_the_before_side_holds_through_a_second_parent_is_not_counted(tmp_path: Path) -> None:
+    # The late push 4 -> 5 brought only 5: commit 2 is on 5's first-parent line, and 4 holds it as its second parent.
+    folder = repository(
+        tmp_path,
+        pulls=[],
+        activity=[
+            entry("push", h(4), h(5), "2026-12-02T10:00:00Z"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[
+            commit(5, [2, 4], "2026-12-02T10:00:00Z"),
+            commit(4, [3, 2], OUTSIDE),
+            commit(3, [1], OUTSIDE),
+            commit(2, [1], "2026-11-10T10:00:00Z"),
+            commit(1, [], OUTSIDE),
+        ],
+    )
+    assert list_changes("acme/shop", folder, START, END).not_covered == [
+        f"acme/shop: not covered: commit {h(2)[:7]} on the main line, dated 2026-11-10 at 10:00 UTC, "
+        "is not explained by the activity history"
+    ]
+
+
+def test_a_direct_push_taken_back_and_later_merged_in_a_pull_request_is_listed(tmp_path: Path) -> None:
+    # Commit 2 is pushed straight to main on 10 Nov and forced back on 11 Nov; a pull request holding it is merged on
+    # 3 Dec as 4 = (1, 3). The merge excludes its own first-parent range only (design §3 step 1), so 2 stays a change.
+    folder = repository(
+        tmp_path,
+        pulls=[pull(9, "2026-12-03T10:00:00Z", 4)],
+        activity=[
+            entry("pr_merge", h(1), h(4), "2026-12-03T10:00:00Z"),
+            entry("force_push", h(2), h(1), "2026-11-11T09:00:00Z"),
+            entry("push", h(1), h(2), "2026-11-10T10:00:00Z"),
+            entry("branch_creation", ZERO, h(1), OUTSIDE),
+        ],
+        main=[
+            commit(4, [1, 3], "2026-12-03T10:00:00Z"),
+            commit(3, [2], "2026-12-02T10:00:00Z"),
+            commit(2, [1], "2026-11-10T09:59:00Z"),
+            commit(1, [], OUTSIDE),
+        ],
+        push_files={(h(1), h(2)): [commit(2, [1], "2026-11-10T09:59:00Z")], (h(2), h(1)): []},
+    )
+    result = list_changes("acme/shop", folder, START, END)
+    assert shown(result) == [(h(2)[:7], "pushed directly", "2026-11-10T10:00:00Z")]
+    assert result.not_covered == []
+
+
 def test_a_push_undone_by_a_force_push_back_counts_what_each_brought(tmp_path: Path) -> None:
     folder = repository(
         tmp_path,

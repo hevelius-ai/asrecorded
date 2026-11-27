@@ -204,12 +204,13 @@ def _list(repository: str, folder: Path, start: datetime, end: datetime) -> Repo
     pushes: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
     for entry in sorted(activity, key=lambda e: parse(e["timestamp"])):
         kind = entry["activity_type"]
-        # Every entry, at any time, brought in the saved commits its `after` holds and its `before` does not; for a
-        # merge, those commits are the pull request's.
-        stretch = _brought_by(entry, main_parents, height)
-        brought |= stretch
+        # For the cross-check, every entry, at any time, brought in the saved commits its `after` holds and its
+        # `before` does not. A merge excludes only its range on the first-parent line (design §3 step 1): a commit
+        # beyond it may have been a direct push of the period, taken back and later merged.
+        brought |= _brought_by(entry, main_parents, height)
         if kind in MERGES:
-            excluded |= stretch
+            line, reached = _first_parent_line(entry["after"], main_parents, entry["before"])
+            excluded |= set(line) if reached else {entry["after"]}
         elif kind in PUSHES and inside(entry["timestamp"]):
             commits = _read(folder / "push" / push_file(entry))
             brought.update(c["sha"] for c in commits)
