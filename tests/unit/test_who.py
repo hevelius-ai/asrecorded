@@ -336,3 +336,14 @@ def test_a_direct_push_by_a_declared_account_is_not_marked_declared_agent_operat
 def test_a_listed_coding_agent_that_is_also_declared_shows_one_account_kind(tmp_path: Path) -> None:
     who = one(tmp_path, pull_request(tmp_path, "Copilot", "lee"), frozenset({"Copilot"}))
     assert who.ai_trace == "coding agent account: GitHub Copilot"
+
+
+def test_a_login_with_capitals_matches_a_declared_account_in_small_letters(tmp_path: Path) -> None:
+    own = one(tmp_path, pull_request(tmp_path, "Builder-Bot", "Builder-Bot"))
+    assert (own.ai_trace, own.pattern, own.declared_agent_operated) == (
+        "declared agent-operated account",
+        "One account",
+        "yes",
+    )
+    approved = one(tmp_path, pull_request(tmp_path, "dana", "dana", [review("Builder-Bot")], number=12))
+    assert approved.pattern == "AI reviewer only"
