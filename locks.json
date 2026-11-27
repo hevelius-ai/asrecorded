@@ -11,7 +11,7 @@
       ]
     },
     "tests/acceptance/S2/test_S2_who_built_and_let_in.py": {
-      "sha256": "4a06f1d474e571a85f21b160dc89d45a80057e564c0af6f7f24e0b4ef1452a38",
+      "sha256": "45f55bdb73191a20f172cbe931e6fa2c9668a7165474e1a40071c4ba56d98420",
       "tests": [
         "test_S2_C1_each_change_in_the_example_set_shows_its_pattern",
         "test_S2_C2_update_branch_does_not_make_the_merger_a_builder",

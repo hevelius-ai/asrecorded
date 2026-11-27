@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,7 @@ ACCOUNTS = {
     "web-flow": (19864447, "User"),
 }
 CLAUDE_LINE = "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+API = "https://api.github.com"
 
 STAND_IN = """
 import json
@@ -77,6 +79,15 @@ def commit(oid: str, parents: list[str], when: str) -> dict[str, Any]:
     }
 
 
+def hours_before(when: str, hours: int) -> str:
+    moment = datetime.strptime(when, "%Y-%m-%dT%H:%M:%SZ") - timedelta(hours=hours)
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def dated(c: dict[str, Any], when: str) -> None:
+    c["commit"]["author"]["date"] = c["commit"]["committer"]["date"] = when
+
+
 def event(oid: int, kind: str, before: str, after: str, when: str, actor: str) -> dict[str, Any]:
     return {
         "id": oid,
@@ -92,7 +103,8 @@ def event(oid: int, kind: str, before: str, after: str, when: str, actor: str) -
 def history(repo: str, seed: int, steps: list[tuple[str, str, str, str, str]]) -> dict[str, Any]:
     """The saved replies for one repository built from steps, oldest first:
     ("pr", number, opener, merger, merged at) or ("push", commit, pusher, "", time).
-    Each pull request is merged with a merge commit and has no approval; its timeline holds the `merged` event."""
+    Each pull request's two commits are made two hours before it is merged with a merge commit; it has no approval.
+    The timelines are added last, by `timelines`, once the commits and reviews are final."""
     root = sha(seed)
     line = [commit(root, [], CREATED)]
     events = [event(seed, "branch_creation", ZERO, root, CREATED, "dana")]
@@ -102,7 +114,8 @@ def history(repo: str, seed: int, steps: list[tuple[str, str, str, str, str]]) -
     for i, (kind, name, actor, merger, when) in enumerate(steps, start=1):
         first, head, merge = sha(seed + 100 * i + 1), sha(seed + 100 * i + 2), sha(seed + 100 * i + 3)
         if kind == "pr":
-            work = [commit(first, [tip], when), commit(head, [first], when)]
+            made = hours_before(when, 2)
+            work = [commit(first, [tip], made), commit(head, [first], made)]
             line += [*work, commit(merge, [tip, head], when)]
             pull = {
                 "number": int(name),
@@ -123,9 +136,6 @@ def history(repo: str, seed: int, steps: list[tuple[str, str, str, str, str]]) -
             }
             replies[f"repos/{repo}/pulls/{name}/commits"] = work
             replies[f"repos/{repo}/pulls/{name}/reviews"] = []
-            replies[f"repos/{repo}/issues/{name}/timeline"] = [
-                {"event": "merged", "actor": account(merger), "commit_id": merge, "created_at": when}
-            ]
             replies[f"repos/{repo}/commits/{head}/check-runs"] = {"total_count": 0, "check_runs": []}
             replies[f"repos/{repo}/commits/{head}/statuses"] = []
             events.append(event(seed + 100 * i, "pr_merge", tip, merge, when, merger))
@@ -145,6 +155,114 @@ def history(repo: str, seed: int, steps: list[tuple[str, str, str, str, str]]) -
     replies[f"repos/{repo}/activity"] = events[::-1]
     replies[f"repos/{repo}/commits"] = line[::-1]
     return replies
+
+
+def identity(person: dict[str, str]) -> dict[str, str]:
+    """A commit's git author or committer as the timeline gives it: name, address and date, no GitHub account."""
+    address = "noreply@github.com" if person["name"] == "GitHub" else f"{person['name']}@example.invalid"
+    return {"name": person["name"], "email": address, "date": person["date"]}
+
+
+def timelines(replies: dict[str, Any], repo: str, auto_merge: dict[str, tuple[str, str]] | None = None) -> None:
+    """Each pull request's timeline (`issues/{n}/timeline`) in the shape GitHub's REST timeline gives, in time order:
+    one `committed` entry per commit of the pull request, one `reviewed` entry per review, `auto_merge_enabled` when
+    `auto_merge` names who switched it on and when, then `merged` and `closed`.
+
+    The shapes are taken from real replies: `committed`, `reviewed`, `merged` and `closed` from the saved replies
+    under spike/raw (for example hevelius-ai/aschecked #3's timeline.json: committed, committed, reviewed, merged,
+    closed); `reviewed` and `auto_merge_enabled` also from primer/react #8795, and `reviewed`, `merged` and `closed`
+    from electron/electron #56067, both read with `gh api --method GET` on 27 Nov 2026. A `committed` entry has no
+    `actor`, `created_at` or `id`; a `reviewed` entry has `user` and `submitted_at`, no `actor` or `created_at`, and
+    its `state` in lower case (`approved`), where the reviews list says `APPROVED`."""
+    for pull in replies[f"repos/{repo}/pulls"]:
+        n = pull["number"]
+        detail = replies[f"repos/{repo}/pulls/{n}"]
+        pull_url = f"{API}/repos/{repo}/pulls/{n}"
+        entries: list[tuple[str, dict[str, Any]]] = []
+        for c in replies[f"repos/{repo}/pulls/{n}/commits"]:
+            oid = c["sha"]
+            entries.append(
+                (
+                    c["commit"]["committer"]["date"],
+                    {
+                        "event": "committed",
+                        "sha": oid,
+                        "node_id": f"C_{oid[:16]}",
+                        "url": f"{API}/repos/{repo}/git/commits/{oid}",
+                        "html_url": f"https://github.com/{repo}/commit/{oid}",
+                        "author": identity(c["commit"]["author"]),
+                        "committer": identity(c["commit"]["committer"]),
+                        "tree": {"sha": oid[::-1], "url": f"{API}/repos/{repo}/git/trees/{oid[::-1]}"},
+                        "message": c["commit"]["message"],
+                        "parents": [
+                            {
+                                "sha": p["sha"],
+                                "url": f"{API}/repos/{repo}/git/commits/{p['sha']}",
+                                "html_url": f"https://github.com/{repo}/commit/{p['sha']}",
+                            }
+                            for p in c["parents"]
+                        ],
+                        "verification": {
+                            "verified": False,
+                            "reason": "unsigned",
+                            "signature": None,
+                            "payload": None,
+                            "verified_at": None,
+                        },
+                    },
+                )
+            )
+        for r in replies[f"repos/{repo}/pulls/{n}/reviews"]:
+            page = f"https://github.com/{repo}/pull/{n}#pullrequestreview-{r['id']}"
+            entries.append(
+                (
+                    r["submitted_at"],
+                    {
+                        "event": "reviewed",
+                        "id": r["id"],
+                        "node_id": f"PRR_{r['id']}",
+                        "user": r["user"],
+                        "body": None,
+                        "commit_id": r["commit_id"],
+                        "submitted_at": r["submitted_at"],
+                        "updated_at": r["submitted_at"],
+                        "state": r["state"].lower(),
+                        "html_url": page,
+                        "pull_request_url": pull_url,
+                        "author_association": "NONE" if r["user"]["type"] == "Bot" else "MEMBER",
+                        "_links": {"html": {"href": page}, "pull_request": {"href": pull_url}},
+                    },
+                )
+            )
+        if auto_merge and str(n) in auto_merge:
+            who, when = auto_merge[str(n)]
+            entries.append((when, issue_event(repo, 8_000_000 + 10 * n, "auto_merge_enabled", account(who), when)))
+        when, merger, merge = detail["merged_at"], detail["merged_by"], detail["merge_commit_sha"]
+        merged = issue_event(repo, 8_000_000 + 10 * n + 1, "merged", merger, when, merge)
+        closed = issue_event(repo, 8_000_000 + 10 * n + 2, "closed", merger, when) | {
+            "state_reason": None,
+            "intent": None,
+        }
+        entries += [(when, merged), (when, closed)]
+        entries.sort(key=lambda pair: pair[0])  # stable: entries of the same time keep the order above
+        replies[f"repos/{repo}/issues/{n}/timeline"] = [entry for _, entry in entries]
+
+
+def issue_event(
+    repo: str, oid: int, kind: str, actor: dict[str, Any], when: str, merge: str | None = None
+) -> dict[str, Any]:
+    """A timeline entry of an issue event (`auto_merge_enabled`, `merged`, `closed`), as GitHub gives it."""
+    return {
+        "id": oid,
+        "node_id": f"IE_{oid}",
+        "url": f"{API}/repos/{repo}/issues/events/{oid}",
+        "event": kind,
+        "actor": actor,
+        "commit_id": merge,
+        "commit_url": f"{API}/repos/{repo}/commits/{merge}" if merge else None,
+        "created_at": when,
+        "performed_via_github_app": None,
+    }
 
 
 def approve(replies: dict[str, Any], repo: str, number: str, reviewer: str, when: str) -> None:
@@ -184,19 +302,18 @@ def shop() -> dict[str, Any]:
     # 13: one of its commits names an AI tool in a Co-Authored-By line
     marked = replies["repos/acme/shop/pulls/13/commits"][1]["commit"]
     marked["message"] = f"work\n\n{CLAUDE_LINE}\n"
-    # 15: dana switched auto-merge on before the merge
-    replies["repos/acme/shop/issues/15/timeline"].insert(
-        0, {"event": "auto_merge_enabled", "actor": account("dana"), "created_at": "2026-11-12T09:00:00Z"}
-    )
     # 18: GitHub links the author field of one of its commits to `stranger`, who took no action on it
     linked = replies["repos/acme/shop/pulls/18/commits"][0]
     linked["commit"]["author"]["name"] = "stranger"
     linked["author"] = account("stranger")
+    # 15: dana switched auto-merge on before the merge
+    timelines(replies, "acme/shop", auto_merge={"15": ("dana", "2026-11-12T09:00:00Z")})
     return replies
 
 
 def updated() -> dict[str, Any]:
-    """acme/updated: lee brings #3 up to date with the main line ("update branch"), then merges it by hand."""
+    """acme/updated: dana starts #3 on the repository's first commit; #2 is merged; lee brings #3 up to date with the
+    main line ("update branch"), which brings in #2's merge, then merges #3 by hand."""
     replies = history(
         "acme/updated",
         0x5000,
@@ -207,6 +324,8 @@ def updated() -> dict[str, Any]:
     )
     main_before = replies["repos/acme/updated/pulls/2"]["merge_commit_sha"]
     first, head = replies["repos/acme/updated/pulls/3/commits"]
+    first["parents"] = [{"sha": sha(0x5000)}]  # the root: #3 was started before #2 was merged
+    dated(first, "2026-11-05T10:00:00Z")
     update = commit(sha(0x5000 + 250), [first["sha"], main_before], "2026-11-07T10:00:00Z")
     update["commit"]["message"] = "Merge branch 'main' into work-3"
     update["commit"]["author"]["name"] = "lee"
@@ -219,6 +338,9 @@ def updated() -> dict[str, Any]:
     replies["repos/acme/updated/pulls/3"]["commits"] = 3
     main_line = replies["repos/acme/updated/commits"]
     main_line.insert(next(i for i, c in enumerate(main_line) if c["sha"] == head["sha"]) + 1, update)
+    # newest first, as GitHub lists the main line; the stable sort keeps a child before a parent of the same time
+    main_line.sort(key=lambda c: c["commit"]["committer"]["date"], reverse=True)
+    timelines(replies, "acme/updated")
     return replies
 
 
@@ -312,6 +434,7 @@ def test_S2_C3_a_login_from_a_commit_author_field_is_never_printed(tmp_path: Pat
     out = run_tool(tmp_path, ["acme/shop"], shop())
     shown = cells(rows(tmp_path, out))
     assert "#18 builder: builder-bot" in shown
+    # the record's files are the files in the output folder; the raw replies in the data folder are not part of it
     written = sorted(p for p in (tmp_path / "record").rglob("*") if p.is_file())
     assert written, "the output folder holds no file"
     for path in written:
@@ -330,7 +453,10 @@ def test_S2_C4_the_row_says_whether_ai_is_shown_and_which_kind(tmp_path: Path) -
 
 def test_S2_C5_a_declared_account_merging_its_own_change_is_counted_under_both(tmp_path: Path) -> None:
     out = run_tool(tmp_path, ["acme/shop"], shop())
-    shown = cells(rows(tmp_path, out))
+    table = rows(tmp_path, out)
+    shown = cells(table)
     assert "#18 pattern: One account" in shown
     assert "#18 declared_agent_operated: yes" in shown
+    declared = [row["change"] for row in table if row.get("declared_agent_operated", "(no such column)") == "yes"]
+    assert declared == ["#18"]
     assert "acme/shop: One account 2 (1 declared agent-operated)" in screen(out)

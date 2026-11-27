@@ -16,9 +16,9 @@ As a reader, I want each change to say who or what built it and let it in, so th
 | --- | --- | --- |
 | S2-C1 | Given saved GitHub replies for `acme/shop` (the example set: `builder-bot`, of type `User`, declared agent-operated in the settings; `lee` approves #11 and #16 on the merged version; `review-bot[bot]`, of type `Bot`, gives #14's only approval; `dana` switches auto-merge on for #15 before it is merged) and the period 2026-11-01T00:00:00Z to 2026-12-01T00:00:00Z, `python -m asrecorded run settings.toml` writes `changes.csv` whose `pattern` column reads `Two people` for #11, `Agent and person` for #12 and #16, `One account` for #13 and #18, `AI reviewer only` for #14, `Automatic, no approval` for #15 and `No pull request` for `a1b2c3d`; #15's `let_in_by` reads `auto-merge switched on by dana` | Request, sentences 1 and 2 |
 | S2-C2 | For `acme/updated`, #3 is opened by `dana`; one of its commits is a merge of the main line into it ("update branch": two parents, committer `web-flow`, author field linked by GitHub to `lee`); `lee` merges it by hand. #3's `builder` reads `dana` and its `let_in_by` reads `lee` | Request, sentence 3 |
-| S2-C3 | #18's `builder` reads `builder-bot`. One of #18's commits has an author field that GitHub links to `stranger`, an account that took no action on the pull request; the text `stranger` appears in no file in the output folder and nowhere on the screen | Request, sentence 4 |
+| S2-C3 | #18's `builder` reads `builder-bot`. One of #18's commits has an author field that GitHub links to `stranger`, an account that took no action on the pull request; the text `stranger` appears in no file in the output folder and nowhere on the screen. The record's files are the files in the output folder (`output` in the settings); the raw replies in the data folder are not part of the record | Request, sentence 4 |
 | S2-C4 | #11, with no sign of AI, has `ai_shown` `not shown` and an empty `ai_trace`; #13, one of whose commits carries a `Co-Authored-By` line naming `Claude Opus 5.5` with Anthropic's no-reply address, has `ai_shown` `yes` and `ai_trace` `commit marker: Claude (Anthropic)` | Request, sentence 5 |
-| S2-C5 | #18's `pattern` reads `One account` and its `declared_agent_operated` reads `yes`, and the screen shows the line `acme/shop: One account 2 (1 declared agent-operated)` | Request, sentence 6 |
+| S2-C5 | #18's `pattern` reads `One account` and its `declared_agent_operated` reads `yes`, and #18 is the only row whose `declared_agent_operated` reads `yes` (the owner's choice 1B: `yes` only where A11 applies), and the screen shows the line `acme/shop: One account 2 (1 declared agent-operated)` | Request, sentence 6 |
 
 ## Plain checklist (approved by the owner; the receipt quotes it word for word)
 
@@ -26,7 +26,7 @@ As a reader, I want each change to say who or what built it and let it in, so th
 | --- | --- | --- |
 | S2-C1 | With the saved example data for the shop project (`acme/shop`, 1 Nov to 1 Dec 2026), each change shows its pattern: #11 Two people; #12 and #16 Agent and person; #13 and #18 One account; #14 AI reviewer only; #15 Automatic, no approval; `a1b2c3d` No pull request. | `#11 pattern: Two people` `#15 let_in_by: auto-merge switched on by dana` `a1b2c3d pattern: No pull request` |
 | S2-C2 | When the person who let a pull request in (merged) also brought it up to date with the main line ("update branch"), the builder is still the person who opened it. | `acme/updated #3 builder: dana` `acme/updated #3 let_in_by: lee` |
-| S2-C3 | #18's builder is `builder-bot`. The account `stranger`, named only in the author line of one of its pieces of work (commit), appears in no file the tool writes and nowhere on the screen. | `#18 builder: builder-bot` |
+| S2-C3 | #18's builder is `builder-bot`. The account `stranger`, named only in the author line of one of its pieces of work (commit), appears in none of the record's files and nowhere on the screen. | `#18 builder: builder-bot` |
 | S2-C4 | A change with no sign of AI says "not shown" under "AI shown", and a change with a sign says what kind and which tool. | `#11 ai_shown: not shown` `#13 ai_shown: yes` `#13 ai_trace: commit marker: Claude (Anthropic)` |
 | S2-C5 | #18 is "One account" and its row says the account is declared agent-operated, and the screen counts it under both. | `#18 pattern: One account` `#18 declared_agent_operated: yes` `acme/shop: One account 2 (1 declared agent-operated)` |
 
@@ -34,7 +34,7 @@ Each example is written as the change (with its project when it is not the shop 
 
 Where these checks depart from the request, as agreed with the owner on 27 Nov 2026:
 
-- Sentence 4 (S2-C3): this story writes only `changes.csv`. The check reads every file in the output folder and the screen, so `record.md` and `record.json` are covered from the day S4 writes them.
+- Sentence 4 (S2-C3): of the record's three files, this story writes only `changes.csv`. The check reads every file in the output folder and the screen, so `record.md` and `record.json` are covered from the day S4 writes them.
 - Sentence 5 (S2-C4): the fixed section "What this record cannot show" is in `record.md`, which S4 writes; S4's request line 4 holds it word for word. This story checks the row. Under BRD section 7's rule ("AI shown: yes" or "not shown"), the row says it as the column `ai_shown` with the cell `not shown`.
 - Sentence 6 (S2-C5): "the totals" are the new screen line here; `record.md`'s totals are S4's request line 1.
 - Sentence 3 (S2-C2) needs a small new example project, `acme/updated`, because the example set has no pull request of that kind.
